@@ -24,6 +24,8 @@ Packages: +1 -29
 
 > 「专门给这三个插件做维护补丁且不影响他们自己更新的。作者停更了，就收录到里面去。」
 
+（2026-10-15 补：原定三个目标是 better-sidebar / ego-browser / video-understand。ego-browser 原本还背着第二份"右边侧边栏 UI 主题"的补丁——把侧边栏实时面板配色改成深海女仆柔金、复用 maid-atelier 素材、加金框与生成背景图，一路长到 45 KB，改到后来面板外观成了"补丁的下游"，上游一升级就全得重做。老大拍板把**这套 UI 改动全部收掉**，`lib/client.js` 回到 0.8.6 原版；issue #70 那个功能修复不在清理范围内，照旧保留。归档在 `_probe/ego-patch-archive-2026-10-15/`。）
+
 - **打补丁，不 fork**。fork 出去就分家了，上游每发一版都得手工 rebase，久了就成一具自己的尸体。pnpm patch 让上游照常更新，我们只挂在上面。
 - **上游停更才收录接管**。判断依据是作者最近的提交密度，不是主题重不重要。
 
@@ -32,7 +34,7 @@ Packages: +1 -29
 | 插件 | 仓库 | ★ | 最后 push | 处置 |
 |---|---|---|---|---|
 | dsh-better-sidebar | omdsh-dev/DSH-better-sidebar | 4170 | 2026-10-14 | 活跃，暂无补丁需求 |
-| dsh-ego-browser | Fisfzy/dsh-ego-browser | 236 | 2026-09-28 | 半月无动静，打补丁 |
+| dsh-ego-browser | Fisfzy/dsh-ego-browser | 236 | 2026-09-28 | 半月无动静；只留 issue#70 修复，**UI 美化已全清**（见下） |
 | dsh-video-understand | ilps2/dsh-video-understand | 12 | 2026-08-24 | 近两月停更、issue 无人回，打补丁 |
 
 ## 用法
