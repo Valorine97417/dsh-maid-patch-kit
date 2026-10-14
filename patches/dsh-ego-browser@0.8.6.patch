@@ -1,8 +1,8 @@
 diff --git a/lib/client.js b/lib/client.js
-index c16b7c4..7765b7f 100644
+index c16b7c4..4c36016 100644
 --- a/lib/client.js
 +++ b/lib/client.js
-@@ -3082,129 +3082,182 @@ window.__ModuleLoader__.load({
+@@ -3082,129 +3082,203 @@ window.__ModuleLoader__.load({
  		var INPUT_ROUTE = "/api/ego/input";
  		var FLUSH_ROUTE = "/api/ego/flush";
  		var FRAME_FOLLOW_MIN_MS = 350;
@@ -28,8 +28,29 @@ index c16b7c4..7765b7f 100644
 -  overflow: hidden; color: inherit; background: transparent;
 +  overflow: hidden; color: var(--ego-ink); background: transparent; position: relative;
    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
++  /* 四周金边框：复用 maid-atelier 的设置面板框素材（2172x320 的金边藏蓝框）。
++     左右各取 220px 的金饰切片、压到 30px 宽显示；上下各取 12px 金线。
++     fill 让中间自动填藏蓝，面板因此有了自己的底。 */
++  border-style: solid;
++  border-width: 12px 30px;
++  border-image-source: var(--maid-settings-frame-art, none);
++  border-image-slice: 12 220 12 220 fill;
++  border-image-width: 12px 30px;
++  border-image-repeat: stretch;
  }
  .dsh-ego-side-root * { box-sizing: border-box; }
++/* 转角藤蔓：皮肤那张 1254x1254 的金线卷草直角。必须铺在 ::before —— border-image 的
++   fill 绘制在 background 之上，写进 background 会被整块盖住。左上 + 右下对角呼应。 */
++.dsh-ego-side-root::before {
++  content: ''; position: absolute; z-index: 2; pointer-events: none;
++  inset: 0;
++  background-image: var(--maid-sidebar-corner-art, none), var(--maid-sidebar-corner-art, none);
++  background-position: left top, right bottom;
++  background-size: 118px 118px;
++  background-repeat: no-repeat;
++  opacity: .8;
++  filter: drop-shadow(0 1px 1px rgba(2,7,24,.42));
++}
 +.dsh-ego-side-root ::-webkit-scrollbar { width: 8px; height: 8px; }
 +.dsh-ego-side-root ::-webkit-scrollbar-track { background: transparent; }
 +.dsh-ego-side-root ::-webkit-scrollbar-thumb { background: var(--ego-gold-soft); border-radius: 4px; }
@@ -237,7 +258,7 @@ index c16b7c4..7765b7f 100644
  .dsh-ego-side-hint { animation: dsh-ego-side-hint-in .2s ease; }
  @keyframes dsh-ego-side-hint-in { from { opacity: .3 } to { opacity: 1 } }
  
-@@ -3214,9 +3267,9 @@ window.__ModuleLoader__.load({
+@@ -3214,9 +3288,9 @@ window.__ModuleLoader__.load({
    overflow: hidden;
  }
  .dsh-ego-side-historyhead {
@@ -249,7 +270,7 @@ index c16b7c4..7765b7f 100644
  }
  .dsh-ego-side-historyhead svg { width: 11px; height: 11px; }
  .dsh-ego-side-historylist { overflow-y: auto; padding: 5px; }
-@@ -3224,18 +3277,17 @@ window.__ModuleLoader__.load({
+@@ -3224,18 +3298,17 @@ window.__ModuleLoader__.load({
    display: flex; gap: 7px; align-items: center; padding: 5px; border-radius: 8px;
    cursor: pointer; transition: background .15s ease;
  }
