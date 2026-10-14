@@ -1,0 +1,445 @@
+diff --git a/dsh/index.js b/dsh/index.js
+index 5a66f8e..fe23bd7 100644
+--- a/dsh/index.js
++++ b/dsh/index.js
+@@ -64,7 +64,7 @@ const OUTPUT_SCHEMA = {
+         required_capability: { type: 'string' },
+         initial_layer: { type: 'string' },
+         effective_layer: { type: 'string' },
+-        upgrade_layer: { type: ['string', 'null'] },
++        upgrade_layer: { type: 'string' },
+         escalation_reason: { type: 'array', items: { type: 'string' } },
+         evidence_score: { type: 'number' },
+         evidence_sources: { type: 'array', items: { type: 'string' } },
+@@ -100,7 +100,9 @@ const TIMEOUT_MS = 15 * 60_000 // pipeline can take minutes (download + ASR + LL
+ function runScript(python, script, args, signal) {
+   return new Promise((resolve, reject) => {
+     const proc = spawn(python, [script, ...args], {
+-      env: { ...process.env },
++      // 本地补丁（2026-10-14）：Windows 上引擎内部多处 subprocess(text=True) 按 GBK 解码，
++      // ffmpeg/yt-dlp 输出含非 GBK 字节时 UnicodeDecodeError 直接炸；强制 UTF-8 模式绕开。
++      env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+       stdio: ['ignore', 'pipe', 'pipe'],
+     })
+     let stdout = ''
+@@ -223,7 +225,20 @@ export function apply(ctx, config = {}) {
+       } catch {
+         throw new Error(`video_understand produced no JSON: ${stdout.trim().slice(0, 300)}`)
+       }
+-      return parsed
++      // 本地补丁（2026-10-03）：引擎返回的 video 是字符串 ✗，但本工具的 outputSchema
++      // 声明 video 为对象 ✗ → DSH 会判 "value.video must be an object" 直接丢弃结果 ✓
++      // 这里把它规整成对象（旧版字符串 / 新版对象都兼容 ✓）
++      const video =
++        parsed.video && typeof parsed.video === 'object'
++          ? parsed.video
++          : {
++              local_path: parsed.video,
++              path: parsed.video,
++              source: parsed.video,
++              title: parsed.title,
++              duration_s: parsed.duration_s,
++            }
++      return { ...parsed, video }
+     },
+   })
+ 
+diff --git a/engine/avis.py b/engine/avis.py
+index 2edf533..83f29b2 100644
+--- a/engine/avis.py
++++ b/engine/avis.py
+@@ -39,6 +39,22 @@ sys.path.insert(0, str(BASE / "motion-signature"))  # for fast_features import b
+ 
+ # ── Helpers ────────────────────────────────────────────────────────
+ 
++# 本地补丁（2026-10-03）：Windows 上 subprocess 默认按 GBK 解码 ✗ —— ffprobe/ffmpeg 输出里
++# 只要有一个非 GBK 字节就炸 UnicodeDecodeError，紧接着 json.loads(None) 再炸一次 ✓
++# 这里把本模块的 subprocess.run 统一包一层：text 模式一律 UTF-8 + errors='replace' ✓
++_subprocess_run = subprocess.run
++
++
++def _utf8_run(*args, **kwargs):
++    if kwargs.get("text") or kwargs.get("universal_newlines"):
++        kwargs.setdefault("encoding", "utf-8")
++        kwargs.setdefault("errors", "replace")
++    return _subprocess_run(*args, **kwargs)
++
++
++subprocess.run = _utf8_run
++
++
+ def run(cmd, desc="", timeout=300, cwd=None, shell=False):
+     """Run a command, print status, return CompletedProcess."""
+     label = f"  [{desc}]" if desc else ""
+diff --git a/engine/requirements-layer.txt b/engine/requirements-layer.txt
+index 4a70082..b6c718d 100644
+--- a/engine/requirements-layer.txt
++++ b/engine/requirements-layer.txt
+@@ -1,4 +1,4 @@
+-# dsh-video-understand 语义层依赖（可选 — 仅"建完整语义层"(suggest_layer)时需要）
++﻿# dsh-video-understand 语义层依赖（可选 — 仅"建完整语义层"(suggest_layer)时需要）
+ # 体积较大（torch 约 2GB），首次建层前再装即可：
+ #   pip install -r engine/requirements-layer.txt
+ # 国内: pip install -r engine/requirements-layer.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+diff --git a/engine/requirements.txt b/engine/requirements.txt
+index 9334d12..42041e7 100644
+--- a/engine/requirements.txt
++++ b/engine/requirements.txt
+@@ -1,4 +1,4 @@
+-# dsh-video-understand L0 核心依赖（默认级别必需，约 200-300MB）
++﻿# dsh-video-understand L0 核心依赖（默认级别必需，约 200-300MB）
+ # 安装: pip install -r engine/requirements.txt
+ # 国内: pip install -r engine/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+ # Python 3.9 - 3.13
+@@ -7,3 +7,5 @@ faster-whisper>=1.0,<2.0      # ASR 转写
+ opencv-python-headless>=4.8   # 场景检测 / 运动轨迹（headless 避免 GUI 依赖）
+ yt-dlp>=2024.8                # B站视频下载
+ xxhash>=3.4                  # cache_content 内容哈希
++
++pandas>=2.0
+diff --git a/engine/stages.py b/engine/stages.py
+index 452bab6..1240009 100644
+--- a/engine/stages.py
++++ b/engine/stages.py
+@@ -24,7 +24,62 @@ if os.path.exists("/etc/ssl/cert.pem"):
+     ssl._create_default_https_context = lambda: ssl.create_default_context(cafile="/etc/ssl/cert.pem")
+ 
+ 
+-# ── LLM 配置：环境变量 → DSH credentials 文件 → 默认值（与 understand_video.py 一致）──
++# 本地补丁（2026-10-14）：改用 DSH 自己的 OpenAI 兼容本地网关（dsh-our-free-model 的
++# chan-relay，127.0.0.1:8326）——它就是"当前正在用的模型"，无需任何外部 API key。
++def _profile_default_model(home):
++    """从 profile 的 cordis.yml 读 agent-default-model 的 provider/model。"""
++    prof = os.environ.get("DSH_PROFILE_DIR") or os.path.join(home, "profiles", "desktop")
++    path = os.path.join(prof, "cordis.yml")
++    fallback = "workbuddy/deepseek-v4.1-flash"
++    if not os.path.exists(path):
++        return fallback
++    try:
++        with open(path, encoding="utf-8", errors="replace") as f:
++            lines = f.read().splitlines()
++    except Exception:
++        return fallback
++    provider = model = ""
++    for i, line in enumerate(lines):
++        if line.strip() == "- id: agent-default-model":
++            for nxt in lines[i + 1:i + 8]:
++                s = nxt.strip()
++                if s.startswith("provider:"):
++                    provider = s.split(":", 1)[1].strip()
++                elif s.startswith("model:"):
++                    model = s.split(":", 1)[1].strip()
++            break
++    return f"{provider}/{model}" if provider and model else fallback
++
++
++def _gateway_config():
++    """本地网关三元组 (key, url, model)；网关没起或没 key 就返回 None。"""
++    import socket
++    if os.environ.get("VIDEO_UNDERSTAND_NO_GATEWAY"):
++        return None
++    port_raw = os.environ.get("DSH_OPENAI_GATEWAY_PORT", "")
++    port = int(port_raw) if port_raw.isdigit() else 8326
++    home = os.environ.get("DSH_HOME") or os.path.expanduser("~/.dsh")
++    key = os.environ.get("DSH_OPENAI_GATEWAY_KEY", "")
++    if not key:
++        cand = os.path.join(home, "openai-gateway", "api-key")
++        if os.path.exists(cand):
++            try:
++                with open(cand, encoding="utf-8") as f:
++                    key = f.read().strip()
++            except Exception:
++                key = ""
++    if not key:
++        return None
++    try:
++        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
++            pass
++    except OSError:
++        return None
++    model = os.environ.get("DSH_GATEWAY_MODEL", "") or _profile_default_model(home)
++    return key, f"http://127.0.0.1:{port}/v1/chat/completions", model
++
++
++# ── LLM 配置：环境变量 → 本地网关 → DSH credentials 文件 → 默认值（与 understand_video.py 一致）──
+ def _load_llm_config():
+     """Load LLM API key: env var → DSH credentials file → empty.
+ 
+@@ -50,6 +105,10 @@ def _load_llm_config():
+         return (os.environ["DEEPSEEK_API_KEY"],
+                 url or "https://api.deepseek.com/v1/chat/completions",
+                 model or "deepseek-chat")
++    # 本地补丁（2026-10-14）：优先用 DSH 本地网关（= 当前正在用的模型），无需外部 key
++    gw = _gateway_config()
++    if gw:
++        return gw
+     # Fallback: DSH credentials file (~/.dsh/.credentials.yaml)
+     cred = os.path.expanduser("~/.dsh/.credentials.yaml")
+     if os.path.exists(cred):
+@@ -62,6 +121,13 @@ def _load_llm_config():
+                         keys["xiaomi"] = line.split(":", 1)[1].strip()
+                     elif line.startswith("DEEPSEEK_API_KEY:"):
+                         keys["deepseek"] = line.split(":", 1)[1].strip()
++                    elif line.startswith("SENSENOVA_API_KEY:"):
++                        keys["sensenova"] = line.split(":", 1)[1].strip()
++            # 本地补丁（2026-10-14）：与 understand_video.py 保持一致 —— Sensenova 优先
++            if "sensenova" in keys:
++                return (keys["sensenova"],
++                        "https://token.sensenova.cn/v1/chat/completions",
++                        "deepseek-v4-flash")
+             if "xiaomi" in keys:
+                 return keys["xiaomi"], "https://api.xiaomimimo.com/v1/chat/completions", "mimo-v2.5"
+             if "deepseek" in keys:
+diff --git a/engine/understand_video.py b/engine/understand_video.py
+index fc702b4..14f9f99 100644
+--- a/engine/understand_video.py
++++ b/engine/understand_video.py
+@@ -22,6 +22,11 @@ def _detect_python():
+     env = os.environ.get("VIDEO_UNDERSTAND_PYTHON")
+     if env:
+         return env
++    # 本地补丁（2026-10-02）：Windows 上没有 python3 这个名字，原逻辑会让后面
++    # 所有 subprocess（yt-dlp / avis / asr）全部调不起来 ✗ —— 引擎自己就是用
++    # 目标解释器跑的，直接用它最稳 ✓
++    if sys.executable:
++        return sys.executable
+     candidates = [
+         "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+         "python3",
+@@ -44,7 +49,62 @@ ASR = os.path.join(_ENGINE_DIR, "livestream-highlight", "asr.py")
+ _REPO_ROOT = os.path.dirname(_ENGINE_DIR)
+ if _REPO_ROOT not in sys.path:
+     sys.path.insert(0, _REPO_ROOT)
+-# LLM 配置：环境变量 → DSH credentials 文件 → 默认值
++# 本地补丁（2026-10-14）：改用 DSH 自己的 OpenAI 兼容本地网关（dsh-our-free-model 的
++# chan-relay，127.0.0.1:8326）——它就是"当前正在用的模型"，无需任何外部 API key。
++def _profile_default_model(home):
++    """从 profile 的 cordis.yml 读 agent-default-model 的 provider/model。"""
++    prof = os.environ.get("DSH_PROFILE_DIR") or os.path.join(home, "profiles", "desktop")
++    path = os.path.join(prof, "cordis.yml")
++    fallback = "workbuddy/deepseek-v4.1-flash"
++    if not os.path.exists(path):
++        return fallback
++    try:
++        with open(path, encoding="utf-8", errors="replace") as f:
++            lines = f.read().splitlines()
++    except Exception:
++        return fallback
++    provider = model = ""
++    for i, line in enumerate(lines):
++        if line.strip() == "- id: agent-default-model":
++            for nxt in lines[i + 1:i + 8]:
++                s = nxt.strip()
++                if s.startswith("provider:"):
++                    provider = s.split(":", 1)[1].strip()
++                elif s.startswith("model:"):
++                    model = s.split(":", 1)[1].strip()
++            break
++    return f"{provider}/{model}" if provider and model else fallback
++
++
++def _gateway_config():
++    """本地网关三元组 (key, url, model)；网关没起或没 key 就返回 None。"""
++    import socket
++    if os.environ.get("VIDEO_UNDERSTAND_NO_GATEWAY"):
++        return None
++    port_raw = os.environ.get("DSH_OPENAI_GATEWAY_PORT", "")
++    port = int(port_raw) if port_raw.isdigit() else 8326
++    home = os.environ.get("DSH_HOME") or os.path.expanduser("~/.dsh")
++    key = os.environ.get("DSH_OPENAI_GATEWAY_KEY", "")
++    if not key:
++        cand = os.path.join(home, "openai-gateway", "api-key")
++        if os.path.exists(cand):
++            try:
++                with open(cand, encoding="utf-8") as f:
++                    key = f.read().strip()
++            except Exception:
++                key = ""
++    if not key:
++        return None
++    try:
++        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
++            pass
++    except OSError:
++        return None
++    model = os.environ.get("DSH_GATEWAY_MODEL", "") or _profile_default_model(home)
++    return key, f"http://127.0.0.1:{port}/v1/chat/completions", model
++
++
++# LLM 配置：环境变量 → 本地网关 → DSH credentials 文件 → 默认值
+ def _load_llm_config():
+     """Load LLM API key: env var → DSH credentials file → empty.
+ 
+@@ -70,6 +130,10 @@ def _load_llm_config():
+         return (os.environ["DEEPSEEK_API_KEY"],
+                 url or "https://api.deepseek.com/v1/chat/completions",
+                 model or "deepseek-chat")
++    # 本地补丁（2026-10-14）：优先用 DSH 本地网关（= 当前正在用的模型），无需外部 key
++    gw = _gateway_config()
++    if gw:
++        return gw
+     # Fallback: DSH credentials file (~/.dsh/.credentials.yaml)
+     cred = os.path.expanduser("~/.dsh/.credentials.yaml")
+     if os.path.exists(cred):
+@@ -82,6 +146,15 @@ def _load_llm_config():
+                         keys["xiaomi"] = line.split(":", 1)[1].strip()
+                     elif line.startswith("DEEPSEEK_API_KEY:"):
+                         keys["deepseek"] = line.split(":", 1)[1].strip()
++                    elif line.startswith("SENSENOVA_API_KEY:"):
++                        keys["sensenova"] = line.split(":", 1)[1].strip()
++            # 本地补丁（2026-10-14）：本机 DEEPSEEK_API_KEY 已失效（401 invalid api key）、
++            # XIAOMI 余额不足（402），Sensenova 的 deepseek-v4-flash 实测可用
++            # （1M 上下文、零计价、OpenAI 兼容 /v1/chat/completions），故置于最优先。
++            if "sensenova" in keys:
++                return (keys["sensenova"],
++                        "https://token.sensenova.cn/v1/chat/completions",
++                        "deepseek-v4-flash")
+             if "xiaomi" in keys:
+                 return keys["xiaomi"], "https://api.xiaomimimo.com/v1/chat/completions", "mimo-v2.5"
+             if "deepseek" in keys:
+@@ -97,6 +170,22 @@ DEFAULT_QUESTIONS = [
+     "这段视频适合什么场景/人群使用？",
+ ]
+ 
++# 本地补丁（2026-10-03）：同 avis.py —— Windows 上 subprocess 默认按 GBK 解码 ✗，
++# 只要输出里有一个非 GBK 字节就抛 UnicodeDecodeError（在 reader 线程里，噪音很大 ✓）。
++# 这里把本模块的 subprocess.run 统一包一层：text 模式一律 UTF-8 + errors='replace' ✓
++_subprocess_run = subprocess.run
++
++
++def _utf8_run(*args, **kwargs):
++    if kwargs.get("text") or kwargs.get("universal_newlines"):
++        kwargs.setdefault("encoding", "utf-8")
++        kwargs.setdefault("errors", "replace")
++    return _subprocess_run(*args, **kwargs)
++
++
++subprocess.run = _utf8_run
++
++
+ def run(cmd, timeout=1800):
+     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+ 
+@@ -133,15 +222,16 @@ def fetch_title(url_or_bv):
+ 
+ def download(url_or_bv, outdir):
+     print(f"⬇️  下载 {url_or_bv} → 360p...", flush=True)
+-    # Full URLs (including bangumi): use yt-dlp directly
+-    if url_or_bv.strip().lower().startswith(("http://", "https://")):
+-        r = run([PY, "-m", "yt_dlp",
+-                 "-f", "worst[ext=mp4]/worst",
+-                 "--no-playlist",
+-                 "-o", os.path.join(outdir, "%(title)s.%(ext)s"),
+-                 url_or_bv])
+-    else:
+-        r = run([PY, BILI, "download", url_or_bv, "--quality", "360", "-o", outdir])
++    # 本地补丁（2026-10-02）：BV 号也走 yt-dlp —— 自带的 BILI 下载脚本在本机静默失败；
++    # 且 B站不提供"带音轨的 mp4"，原格式串 worst[ext=mp4]/worst 一个都匹配不到。
++    target_url = url_or_bv.strip()
++    if not target_url.lower().startswith(("http://", "https://")):
++        target_url = f"https://www.bilibili.com/video/{target_url}"
++    r = run([PY, "-m", "yt_dlp",
++             "-f", "bv*[height<=360]+ba/b[height<=360]/worst",
++             "--no-playlist",
++             "-o", os.path.join(outdir, "%(title)s.%(ext)s"),
++             target_url])
+     if r.returncode != 0:
+         raise SystemExit(f"下载失败: {r.stderr[-300:]}")
+     mp4s = sorted(glob.glob(os.path.join(outdir, "*.mp4")), key=os.path.getmtime)
+diff --git a/engine/visual_level.py b/engine/visual_level.py
+index f04fac3..94c791a 100644
+--- a/engine/visual_level.py
++++ b/engine/visual_level.py
+@@ -22,7 +22,63 @@ if os.path.exists("/etc/ssl/cert.pem"):
+     os.environ.setdefault("SSL_CERT_FILE", "/etc/ssl/cert.pem")
+     ssl._create_default_https_context = lambda: ssl.create_default_context(cafile="/etc/ssl/cert.pem")
+ 
+-# VLM 配置：环境变量 → DSH credentials 文件 → 默认值
++# 本地补丁（2026-10-14）：改用 DSH 自己的 OpenAI 兼容本地网关（dsh-our-free-model 的
++# chan-relay，127.0.0.1:8326）——它就是"当前正在用的模型"，无需任何外部 API key。
++def _profile_default_model(home):
++    """从 profile 的 cordis.yml 读 agent-default-model 的 provider/model。"""
++    prof = os.environ.get("DSH_PROFILE_DIR") or os.path.join(home, "profiles", "desktop")
++    path = os.path.join(prof, "cordis.yml")
++    fallback = "workbuddy/deepseek-v4.1-flash"
++    if not os.path.exists(path):
++        return fallback
++    try:
++        with open(path, encoding="utf-8", errors="replace") as f:
++            lines = f.read().splitlines()
++    except Exception:
++        return fallback
++    provider = model = ""
++    for i, line in enumerate(lines):
++        if line.strip() == "- id: agent-default-model":
++            for nxt in lines[i + 1:i + 8]:
++                s = nxt.strip()
++                if s.startswith("provider:"):
++                    provider = s.split(":", 1)[1].strip()
++                elif s.startswith("model:"):
++                    model = s.split(":", 1)[1].strip()
++            break
++    return f"{provider}/{model}" if provider and model else fallback
++
++
++def _gateway_config():
++    """本地网关三元组 (key, url, model)；网关没起或没 key 就返回 None。"""
++    import socket
++    if os.environ.get("VIDEO_UNDERSTAND_NO_GATEWAY"):
++        return None
++    port_raw = os.environ.get("DSH_OPENAI_GATEWAY_PORT", "")
++    port = int(port_raw) if port_raw.isdigit() else 8326
++    home = os.environ.get("DSH_HOME") or os.path.expanduser("~/.dsh")
++    key = os.environ.get("DSH_OPENAI_GATEWAY_KEY", "")
++    if not key:
++        cand = os.path.join(home, "openai-gateway", "api-key")
++        if os.path.exists(cand):
++            try:
++                with open(cand, encoding="utf-8") as f:
++                    key = f.read().strip()
++            except Exception:
++                key = ""
++    if not key:
++        return None
++    try:
++        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
++            pass
++    except OSError:
++        return None
++    model = (os.environ.get("VLM_MODEL", "") or os.environ.get("DSH_GATEWAY_MODEL", "")
++             or _profile_default_model(home))
++    return key, f"http://127.0.0.1:{port}/v1/chat/completions", model
++
++
++# VLM 配置：环境变量 → 本地网关 → DSH credentials 文件 → 默认值
+ def _load_vlm_config():
+     """配对规则：一把 key 绝不能被送到不是为它选定的主机上。
+       - LLM_API_KEY（显式覆盖）：key 是用户选的，他设的 URL/model 也照用
+@@ -45,6 +101,10 @@ def _load_vlm_config():
+         return (os.environ["DEEPSEEK_API_KEY"],
+                 url or "https://api.deepseek.com/v1/chat/completions",
+                 model or "deepseek-chat")
++    # 本地补丁（2026-10-14）：优先用 DSH 本地网关（= 当前正在用的模型），无需外部 key
++    gw = _gateway_config()
++    if gw:
++        return gw
+     # Fallback: DSH credentials file
+     cred = os.path.expanduser("~/.dsh/.credentials.yaml")
+     if os.path.exists(cred):
+@@ -89,8 +149,14 @@ def vlm_frames(frame_paths, question):
+         content.append({"type": "image_url",
+                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+     content.append({"type": "text", "text": question})
+-    body = {"model": MODEL, "messages": [{"role": "user", "content": content}],
+-            "max_tokens": 2048, "temperature": 0.3}
++    # 本地补丁（2026-10-14）：DSH 本地网关的渠道要求首条必须是 system 消息
++    # （否则 400 "first message is not system prompt"）；且当前模型是 reasoning 模型，
++    # max_tokens 太小会让 reasoning 吃光预算、content 返回 null，故留足余量。
++    body = {"model": MODEL,
++            "messages": [{"role": "system",
++                          "content": "你是视频画面分析助手，用中文准确描述看到的画面。"},
++                         {"role": "user", "content": content}],
++            "max_tokens": 4096, "temperature": 0.3}
+     req = urllib.request.Request(API_URL, data=json.dumps(body).encode(),
+         headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"})
+     with urllib.request.urlopen(req, timeout=120) as resp:

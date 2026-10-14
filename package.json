@@ -1,0 +1,43 @@
+{
+  "name": "dsh-maid-patch-kit",
+  "description": "DSH 小困插件 · 第三方插件维护：给社区插件打不阻碍上游更新的维护补丁，每次启动体检补丁是否还活着；上游停更的收录接管。",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "pnpm-patch",
+    "maintenance",
+    "upstream-patch",
+    "better-sidebar",
+    "ego-browser",
+    "video-understand",
+    "windows-fix"
+  ],
+  "files": [
+    "index.js",
+    "lib",
+    "scripts",
+    "patches",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./lib/selfcheck.js": "./lib/selfcheck.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

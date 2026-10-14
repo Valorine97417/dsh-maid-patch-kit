@@ -1,0 +1,83 @@
+diff --git a/runtime/ego-linux/src/chrome.mjs b/runtime/ego-linux/src/chrome.mjs
+index dba45a1..b2ca888 100644
+--- a/runtime/ego-linux/src/chrome.mjs
++++ b/runtime/ego-linux/src/chrome.mjs
+@@ -405,7 +405,78 @@ export async function reapOrphanedBrowsers() {
+  * — a browser we can no longer drive. Since this profile is single-purpose,
+  * that orphan is terminated rather than left to block every future run.
+  */
++/**
++ * Terminate whatever Windows process still owns our profile.
++ *
++ * The command line is the only place Windows records the owner, so enumerate it
++ * there. Collected first, signalled second: killing the parent mid-enumeration
++ * would otherwise shorten the list.
++ */
++async function killWindowsProfileOwners(profileDir) {
++  // The profile path may hold non-ASCII (a user name), which would not survive a
++  // round trip through the console code page. It travels as an environment
++  // variable instead — UTF-16 end to end — and only decimal pids come back.
++  const script = [
++    "$p = $env:EGO_LINUX_PROFILE_DIR;",
++    "$ids = @(Get-CimInstance Win32_Process |",
++    "Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -and $_.CommandLine.Contains($p) } |",
++    "Select-Object -ExpandProperty ProcessId);",
++    "$ids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue };",
++    "$ids -join ','",
++  ].join(" ");
++
++  const stdout = await new Promise((resolve) => {
++    let settled = false;
++    let child = null;
++    const finish = (value) => {
++      if (settled) return;
++      settled = true;
++      clearTimeout(timer);
++      resolve(value);
++    };
++    // Bounded by hand: a sweep that hangs would turn "the launch times out" into
++    // "the launch never returns", which is strictly worse than not sweeping.
++    const timer = setTimeout(() => {
++      try { child?.kill(); } catch { /* already gone */ }
++      finish("");
++    }, 10000);
++    try {
++      child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
++        stdio: ["ignore", "pipe", "ignore"],
++        windowsHide: true,   // no console flash on every cold start
++        env: { ...process.env, EGO_LINUX_PROFILE_DIR: profileDir },
++      });
++    } catch {
++      finish("");   // a failed sweep must not fail the launch it exists to unblock
++      return;
++    }
++    let out = "";
++    child.stdout.on("data", (chunk) => { out += chunk; });
++    child.on("error", () => finish(""));
++    child.on("close", () => finish(out));
++  });
++
++  const pids = String(stdout).trim().split(",")
++    .map((value) => Number(value.trim()))
++    .filter((value) => Number.isInteger(value) && value > 0);
++
++  if (pids.length === 0) return 0;
++  // TerminateProcess returns before the target is gone; the profile lock is
++  // released a beat later, and launching into a held lock is what fails.
++  await new Promise((resolve) => setTimeout(resolve, 500));
++  return pids.length;
++}
++
+ async function clearProfileLock(profileDir) {
++  // Windows has no SingletonLock symlink, so the readlink path below can never
++  // find the owner there. Without this branch one orphan blocks the profile
++  // permanently, which is exactly the failure this function is meant to prevent.
++  if (process.platform === "win32") {
++    const killed = await killWindowsProfileOwners(profileDir);
++    await rm(join(profileDir, "lockfile"), { force: true });
++    return killed > 0;
++  }
++
+   const lock = join(profileDir, "SingletonLock");
+   let target;
+   try {
