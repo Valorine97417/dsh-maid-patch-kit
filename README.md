@@ -22,22 +22,16 @@ Packages: +1 -29
 
 ## 收录原则（老大定的）
 
-> 「专门给这三个插件做维护补丁且不影响他们自己更新的。作者停更了，就收录到里面去。」
-
-（2026-10-15 补：原定三个目标是 better-sidebar / ego-browser / video-understand。ego-browser 原本还背着第二份"右边侧边栏 UI 主题"的补丁——把侧边栏实时面板配色改成深海女仆柔金、复用 maid-atelier 素材、加金框与生成背景图，一路长到 45 KB，改到后来面板外观成了"补丁的下游"，上游一升级就全得重做。老大拍板把**这套 UI 改动全部收掉**，`lib/client.js` 回到 0.8.6 原版；issue #70 那个功能修复不在清理范围内，照旧保留。归档在 `_probe/ego-patch-archive-2026-10-15/`。）
-
-（2026-10-16 补：老大查过 ego-browser 的实际使用度后拍板——「那就不用留了，把 dsh-better-sidebar 和 dsh-ego-browser 这两个卸载了」。两个插件已从 profile 卸掉（依赖 / bundles / cordis.yml 挂载行 / `patchedDependencies` 登记全部清除），本仓随之撤下 ego-browser 补丁；正本归档在 `_probe/ego-patch-archive-2026-10-16/dsh-ego-browser@0.8.6.patch`（3530 字节，md5 `765a8726904d3ced5d7190d5cd1ca869`），哪天再装回来可以照原样重做。**本仓现在只维护 video-understand 一个目标。**）
+> 「专门给这些插件做维护补丁且不影响他们自己更新的。作者停更了，就收录到里面去。」
 
 - **打补丁，不 fork**。fork 出去就分家了，上游每发一版都得手工 rebase，久了就成一具自己的尸体。pnpm patch 让上游照常更新，我们只挂在上面。
 - **上游停更才收录接管**。判断依据是作者最近的提交密度，不是主题重不重要。
 
-当前唯一目标的上游活跃度（2026-10-16 实查）：
+当前目标的上游活跃度（2026-10-16 实查）：
 
 | 插件 | 仓库 | ★ | 最后 push | 处置 |
 |---|---|---|---|---|
 | dsh-video-understand | ilps2/dsh-video-understand | 12 | 2026-08-24 | 近两月停更、issue 无人回，打补丁 |
-
-（已退出：dsh-better-sidebar（omdsh-dev/DSH-better-sidebar，活跃，本就不需要补丁）、dsh-ego-browser（Fisfzy/dsh-ego-browser）——两包已于 2026-10-16 从本机卸载。）
 
 ## 用法
 
