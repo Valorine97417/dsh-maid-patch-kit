@@ -1,6 +1,6 @@
 # dsh-maid-patch-kit
 
-> DSH 小困插件 · 第三方插件维护：给社区插件打**不阻碍上游更新**的维护补丁，每次启动体检补丁是否还活着；上游停更的收录接管。
+> DSH 小困插件 · 第三方插件维护：给社区插件打**不阻碍上游更新**的维护补丁，每次启动体检补丁是否还活着；上游停更的整包接管。
 
 ## 这包解决什么问题
 
@@ -24,14 +24,16 @@ Packages: +1 -29
 
 > 「专门给这些插件做维护补丁且不影响他们自己更新的。作者停更了，就收录到里面去。」
 
-- **打补丁，不 fork**。fork 出去就分家了，上游每发一版都得手工 rebase，久了就成一具自己的尸体。pnpm patch 让上游照常更新，我们只挂在上面。
-- **收录 ≠ 接管**。目标一律登记进表（`lib/targets.js`），但 `patched` 与 `watch` 两种状态分得清：上游停更才轮到接管打补丁，还活着就只登记待命，等它哪天不动了再说。判断依据是作者最近的提交密度，不是主题重不重要。
+- **先打补丁，不 fork**。fork 出去就分家了，上游每发一版都得手工 rebase，久了就成一具自己的尸体。只要上游还活着就走 pnpm patch：上游照常更新，我们只挂在上面。
+- **停更了才接管**。上游确实不动了、而改动面又大到补丁装不下（比如客户端契约整块换了），才把整包搬进本仓成为 `forked`。这不是分家，是接手一具已经没人管的尸体——`patches/` 那条路对它是无效的，因为根本没有新版可跟。
+- **收录 ≠ 接管**。目标一律登记进表（`lib/targets.js`），`patched` / `forked` / `watch` 三种状态分得清：上游停更才轮到接管，还活着就只登记待命，等它哪天不动了再说。判断依据是作者最近的提交密度，不是主题重不重要。
 
 当前目标的上游活跃度（2026-10-16 实查）：
 
 | 插件（包名） | 中文名 | 能用来干嘛 | 仓库 | ★ | 最后 push | 状态 | 处置 |
 |---|---|---|---|---|---|---|---|
 | dsh-video-understand | 视频理解 | B站/BV/本地视频丢进去，抽字幕与画面轨迹，出摘要和问答；引擎自带，免配 key。 | ilps2/dsh-video-understand | 12 | 2026-08-24 | patched | 近两月停更、issue 无人回，已打补丁 |
+| dsh-maid-guard | 插件守护 | 装插件前后自动把 profile 存一份档；某次装完起不来了，一键退回上一个能用的状态，还能把肇事插件隔离掉先开起来。 | lxzy-7/dsh-plugin-guard | — | 2026-08-18 | **forked** | 停更两月；原版按网页版写的，桌面端装上也是死的，整包接管 |
 | dsh-orb | 悬浮球 | 桌面悬浮球：随手呼出聊天窗，能看屏幕、动鼠标键盘，让 AI 直接替你操作电脑。 | mini-yifan/dsh-orb-cordis | 239 | 2026-10-15 | watch | 上游正活跃（0.1.7 刚发、72 issue 在动），只登记待命 |
 
 这张表不是手抄的：中文名、用途、仓库与状态存在 `lib/targets.js`，`node scripts/patch.mjs list` 打印的是同一份。**新增目标时同步那个文件**，否则 `list` 少印两行——不报错，只是不好看。
@@ -39,12 +41,13 @@ Packages: +1 -29
 ## 用法
 
 ```bash
-node scripts/patch.mjs list                 # 看本仓带哪些补丁、目标版本
+node scripts/patch.mjs list                 # 看本仓带哪些补丁/接管/观察目标
 node scripts/patch.mjs install              # 登记 + pnpm install + 核对（--dry-run 可预演）
 node scripts/patch.mjs verify               # 只核对：登记、hash、落盘字节
 node scripts/patch.mjs remove               # 撤销登记与补丁文件，再 pnpm install
 node scripts/patch.mjs upgrade              # 上游升版后重做补丁（--to <版本> 可指定）
 node scripts/venv.mjs                       # 补 dsh-video-understand 的 Python 运行时
+node guard/scripts/smoke-test.js            # 接管包的 16 项自测
 ```
 
 改完补丁要**重启 DSH** 才生效（宿主在启动时加载插件）。
@@ -73,6 +76,35 @@ node scripts/venv.mjs                       # 补 dsh-video-understand 的 Pytho
 
 另附：`engine/understand_video.py` 的下载格式串从 `worst[ext=mp4]/worst` 改为 `bv*[height<=360]+ba/b[height<=360]/worst`（B站不提供带音轨的 mp4，原串报 `Requested format is not available`），裸 BV 号补成完整 URL 走 yt-dlp（不再依赖不存在的 `~/.agents/skills/bilibili-downloader/scripts/bili_download.py`）。
 
+## 已接管：`dsh-maid-guard`（原 `dsh-plugin-guard`，正本在 `guard/`）
+
+上游 lxzy-7/dsh-plugin-guard 最后一次提交是 2026-08-18（v0.3.2），其后两个月零动静。本机从来没装上过它——2026-10-14 那次安装被 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` 拦在半路。
+
+即便装上也是死的。原版按**网页版**写：默认 profile 写死 `web`、健康检查端口写死 3080、客户端半边把 `settingsScope` 服务列进 `inject`。桌面端这两样都没有——真端口是 19387（还是运行期才知道的），而 rc.2 已经把 `settingsScope` 和 `settings.plugin.item` 槽位整个删掉了。`inject` 里挂着一个不存在的服务名，整个客户端半边永远 pending：设置页那块「备份管理」不出现，什么都不报。
+
+改动面横跨宿主半、客户端半、CLI 与守护脚本，pnpm patch 装不下（也没必要——没有新版可跟）。所以整包搬进 `guard/`，成为本仓的第二个 bundle。
+
+**改了什么**
+
+- 新增 `guard/src/profile.js`：所有环境知识收在这一处。`detectProfile()` 按「显式参数 → `DSH_GUARD_PROFILE` → `DSH_PROFILE_DIR` 的目录名 → `profiles/desktop` → `profiles/web` → 排序第一个」探测；`portCandidates()` 给出 `[DSH_GUARD_PORT?, 配置值, 19387, 3080]` 让健康检查逐个试。宿主半、CLI、守护脚本共用它，谁也不再写死。
+- `src/engine.js`：`harnessVersion()` 增加桌面端分支——读不到常规安装路径时改从 `process.argv` 里找那个含 `dsh-desktop-host` 的目录；去掉**唯一**的运行时依赖 `js-yaml`，换成内置的 `parsePatchEntries()`（够解析 `cordis.patch.yml` 的 `- id:` / `name:` / `insert:`）。零外部依赖后，任何 pnpm 布局都能加载。
+- `src/incident.js`：报告里两处硬编码的 `'web'` 改用 `detectProfile()`；健康探测换成 `probeHealth()` 多端口轮试（**401 也算活**——桌面端根路径要鉴权 token）。
+- `index.js`：顶层 `import z from '@deepseek-ai/schemastery'` 改动态可选加载（桌面端 profile 的 `@deepseek-ai` 目录是**空的**，静态 import 会让整个插件加载失败）；`settings` 段改成 `typeof settings.register === 'function'` 的软探测，rc.2 上安静跳过而不是抛错。
+- `client.js`：`exports.inject` 从 `['slots','settingsScope']` 收窄到 `['slots']`；插件配置卡那段改成 `ctx.get('settingsScope')` 软探测；文案里的 web 语境换成桌面端。保留 `settings.section`（备份管理页）与 `shell.overlay`（启动心跳）——这两条 rc.2 都在。
+- `scripts/`：`boot-guard.ps1` 的启动形态改为「有 `DeepSeek Harness.exe` 就起桌面壳，没有才退回 `dsh.cmd web`」；`boot-guard.sh`、`rollback.cmd`、`guard-cli.js` 的默认 profile 与端口一并跟探测器走。
+
+**怎么跑**
+
+```bash
+node guard/scripts/guard-cli.js profiles                    # 看有哪些 profile
+node guard/scripts/guard-cli.js snapshot --profile desktop   # 存一份档
+node guard/scripts/guard-cli.js list --profile desktop       # 列快照
+node guard/scripts/guard-cli.js health                       # 多端口探活
+node guard/scripts/smoke-test.js                             # 16 项自测
+```
+
+快照落在 `~/.dsh/rollbacks/<profile>/<stamp>/`，含 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`cordis.yml`、`cordis.patch.yml` 五个文件 + `manifest.json`。装插件（`plugin_install` / `plugin_uninstall` / `plugin_toggle`）前会自动先存一份 `auto-before-install`。
+
 ## 启动自检
 
 `index.js` 在 DSH 启动时跑一次 `lib/selfcheck.js`，问三件事（缺一不可，因为它们是三个独立的失效点）：
@@ -93,8 +125,8 @@ node scripts/venv.mjs                       # 补 dsh-video-understand 的 Pytho
 
 ## 边界
 
-- 本包**不改**上游任何仓库，只维护 `patches/` 下的补丁正本与登记。
-- 上游发新版后补丁不会自动适配，跑 `upgrade`（用 `git apply` 试重放，贴不上会明确报出是哪个文件哪一段）。
+- 本包**不改**上游任何仓库。补丁类的正本在 `patches/`，接管类的正本在 `guard/` 这样的目录里。
+- 上游发新版后补丁不会自动适配，跑 `upgrade`（用 `git apply` 试重放，贴不上会明确报出是哪个文件哪一段）。接管类没有上游可跟，不适用。
 - 补丁内容改了，**必须同步** `lib/selfcheck.js` 的 `APPLIED_MARKERS`，否则体检会说谎。
 - 本包只面向本机 desktop profile，不试图做成通用工具。
 

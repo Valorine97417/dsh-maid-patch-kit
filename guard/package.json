@@ -1,0 +1,57 @@
+{
+  "name": "dsh-maid-guard",
+  "description": "DSH 小困插件 · 插件守护：装插件前后自动存档 profile，崩了能一键回退；上游停更后由小困接管，适配桌面端。",
+  "version": "0.3.2-fork.1",
+  "type": "module",
+  "main": "./index.js",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "guard",
+    "snapshot",
+    "rollback",
+    "quarantine",
+    "desktop",
+    "dsh-maid"
+  ],
+  "files": [
+    "index.js",
+    "client.js",
+    "src",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md",
+    "README.upstream.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-guard": "./scripts/guard-cli.js"
+  },
+  "scripts": {
+    "test": "node scripts/smoke-test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "react",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ],
+      "platform": "web"
+    }
+  }
+}

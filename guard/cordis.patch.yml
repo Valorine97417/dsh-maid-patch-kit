@@ -1,0 +1,6 @@
+# dsh-maid-guard bundle patch
+# 上游 dsh-plugin-guard 的那一行改指向接管后的包名——宿主按 name 解析包，
+# 旧名字在本仓不存在。id 保持 guard，事件/路由前缀不变。
+- insert:
+    - id: guard
+      name: 'dsh-maid-guard'

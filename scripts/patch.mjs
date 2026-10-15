@@ -152,6 +152,7 @@ function cmdList() {
   const patches = listPatches(PATCH_DIR)
   if (patches.length === 0) {
     console.log('patches/ 下没有补丁文件。')
+    printForked()
     return printWatching()
   }
   console.log(`本仓补丁（${patches.length} 个）：`)
@@ -172,7 +173,32 @@ function cmdList() {
     console.log(`    目标：${patch.packageName}@${patch.version}   ${patch.bytes} 字节`)
     console.log(`    sha256：${patch.sha256}`)
   }
+  printForked()
   return printWatching()
+}
+
+/**
+ * 接管的整包 —— 上游停更、改动面大到 pnpm patch 装不下，正本搬进本仓。
+ * 这些包不走 patches/，走 guard/ 这样的自带目录，接入方式是 profile 里一条
+ * `link:` 依赖 + bundles 列表。
+ */
+function printForked() {
+  const forked = targetsWithStatus('forked')
+  if (forked.length === 0) return
+  console.log(`\n已接管（${forked.length} 个，上游停更，正本在本仓）：`)
+  for (const [packageName, meta] of forked) {
+    const installed = installedVersion(path.join(profile, 'node_modules', packageName))
+    console.log(`  ${packageName}  （${installed === undefined ? '未接入 profile' : `已接入 ${installed}`}）`)
+    if (meta.title || meta.summary) {
+      console.log(`    插件：${meta.title ?? '（未登记中文名）'}${meta.summary ? ` —— ${meta.summary}` : ''}`)
+    }
+    if (meta.repo) {
+      const upstream = meta.upstreamName ? `（原包名 ${meta.upstreamName}）` : ''
+      console.log(`    上游：${meta.repo}${upstream}`)
+    }
+    if (meta.reason) console.log(`    接管理由：${meta.reason}`)
+    console.log(`    正本：${path.relative(REPO, path.join(REPO, 'guard')).split(path.sep).join('/')}/`)
+  }
 }
 
 /**
