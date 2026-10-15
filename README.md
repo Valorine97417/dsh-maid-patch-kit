@@ -26,16 +26,18 @@ Packages: +1 -29
 
 （2026-10-15 补：原定三个目标是 better-sidebar / ego-browser / video-understand。ego-browser 原本还背着第二份"右边侧边栏 UI 主题"的补丁——把侧边栏实时面板配色改成深海女仆柔金、复用 maid-atelier 素材、加金框与生成背景图，一路长到 45 KB，改到后来面板外观成了"补丁的下游"，上游一升级就全得重做。老大拍板把**这套 UI 改动全部收掉**，`lib/client.js` 回到 0.8.6 原版；issue #70 那个功能修复不在清理范围内，照旧保留。归档在 `_probe/ego-patch-archive-2026-10-15/`。）
 
+（2026-10-16 补：老大查过 ego-browser 的实际使用度后拍板——「那就不用留了，把 dsh-better-sidebar 和 dsh-ego-browser 这两个卸载了」。两个插件已从 profile 卸掉（依赖 / bundles / cordis.yml 挂载行 / `patchedDependencies` 登记全部清除），本仓随之撤下 ego-browser 补丁；正本归档在 `_probe/ego-patch-archive-2026-10-16/dsh-ego-browser@0.8.6.patch`（3530 字节，md5 `765a8726904d3ced5d7190d5cd1ca869`），哪天再装回来可以照原样重做。**本仓现在只维护 video-understand 一个目标。**）
+
 - **打补丁，不 fork**。fork 出去就分家了，上游每发一版都得手工 rebase，久了就成一具自己的尸体。pnpm patch 让上游照常更新，我们只挂在上面。
 - **上游停更才收录接管**。判断依据是作者最近的提交密度，不是主题重不重要。
 
-当前三个目标的上游活跃度（2026-10-15 实查）：
+当前唯一目标的上游活跃度（2026-10-16 实查）：
 
 | 插件 | 仓库 | ★ | 最后 push | 处置 |
 |---|---|---|---|---|
-| dsh-better-sidebar | omdsh-dev/DSH-better-sidebar | 4170 | 2026-10-14 | 活跃，暂无补丁需求 |
-| dsh-ego-browser | Fisfzy/dsh-ego-browser | 236 | 2026-09-28 | 半月无动静；只留 issue#70 修复，**UI 美化已全清**（见下） |
 | dsh-video-understand | ilps2/dsh-video-understand | 12 | 2026-08-24 | 近两月停更、issue 无人回，打补丁 |
+
+（已退出：dsh-better-sidebar（omdsh-dev/DSH-better-sidebar，活跃，本就不需要补丁）、dsh-ego-browser（Fisfzy/dsh-ego-browser）——两包已于 2026-10-16 从本机卸载。）
 
 ## 用法
 
@@ -73,16 +75,6 @@ node scripts/venv.mjs                       # 补 dsh-video-understand 的 Pytho
 - `engine/visual_level.py`：`max_tokens` 2048 → 4096。网关模型带 reasoning，预算不够会返回 `content: null` + `finish_reason: length`。
 
 另附：`engine/understand_video.py` 的下载格式串从 `worst[ext=mp4]/worst` 改为 `bv*[height<=360]+ba/b[height<=360]/worst`（B站不提供带音轨的 mp4，原串报 `Requested format is not available`），裸 BV 号补成完整 URL 走 yt-dlp（不再依赖不存在的 `~/.agents/skills/bilibili-downloader/scripts/bili_download.py`）。
-
-### `dsh-ego-browser@0.8.6.patch`（3.5 KB，1 个文件）
-
-对应上游 issue #70（2026-10-12 开，至今 open）。
-
-`runtime/ego-linux/src/chrome.mjs` 的 `clearProfileLock()` 只认 POSIX 的 `SingletonLock` 符号链接；Windows 的 Chrome 只留一个空 `lockfile`，`readlink()` 抛 ENOENT → `catch { return false }` → 清理代码不可达。
-
-后果：非优雅退出后孤儿 Chrome 占着 `--user-data-dir`，之后每次 `launch()` 都被转交给它然后自己退出，`waitForEndpoint()`（20s）耗尽超时，**agent 浏览器再也打不开**，直到重启电脑或手工杀进程。
-
-补丁加 `killWindowsProfileOwners()`：用 PowerShell 枚举 `chrome.exe` 且命令行含 `$env:EGO_LINUX_PROFILE_DIR` 的进程（路径走环境变量，避免中文用户名被控制台代码页破坏），先收集后终止，10 秒硬上限，然后删掉 `lockfile`。按命令行过滤，绝不碰用户自己的 Chrome。
 
 ## 启动自检
 
