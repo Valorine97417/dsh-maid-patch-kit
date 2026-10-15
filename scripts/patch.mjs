@@ -27,7 +27,7 @@ import process from 'node:process'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { listPatches, inspectProfile, describe as describeRows, installedVersion } from '../lib/selfcheck.js'
-import { targetOf } from '../lib/targets.js'
+import { targetOf, targetsWithStatus } from '../lib/targets.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '..')
@@ -152,7 +152,7 @@ function cmdList() {
   const patches = listPatches(PATCH_DIR)
   if (patches.length === 0) {
     console.log('patches/ 下没有补丁文件。')
-    return 0
+    return printWatching()
   }
   console.log(`本仓补丁（${patches.length} 个）：`)
   for (const patch of patches) {
@@ -171,6 +171,29 @@ function cmdList() {
     }
     console.log(`    目标：${patch.packageName}@${patch.version}   ${patch.bytes} 字节`)
     console.log(`    sha256：${patch.sha256}`)
+  }
+  return printWatching()
+}
+
+/**
+ * 观察中的目标 —— 收了没动手的那些。
+ * 「收录」与「接管」是两件事：登记进表，等上游停更才轮到接管。
+ */
+function printWatching() {
+  const watching = targetsWithStatus('watch')
+  if (watching.length === 0) return 0
+  console.log(`\n观察中（${watching.length} 个，上游还活着，只登记待命）：`)
+  for (const [packageName, meta] of watching) {
+    const installed = installedVersion(path.join(profile, 'node_modules', packageName))
+    console.log(`  ${packageName}  （${installed === undefined ? '未装' : `已装 ${installed}`}）`)
+    if (meta.title || meta.summary) {
+      console.log(`    插件：${meta.title ?? '（未登记中文名）'}${meta.summary ? ` —— ${meta.summary}` : ''}`)
+    }
+    if (meta.repo || meta.reason) {
+      const repo = meta.repo ? `上游：${meta.repo}` : ''
+      const reason = meta.reason ? `待命理由：${meta.reason}` : ''
+      console.log(`    ${[repo, reason].filter(Boolean).join('    ')}`)
+    }
   }
   return 0
 }
