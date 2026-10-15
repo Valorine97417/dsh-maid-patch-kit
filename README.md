@@ -29,9 +29,11 @@ Packages: +1 -29
 
 当前目标的上游活跃度（2026-10-16 实查）：
 
-| 插件 | 仓库 | ★ | 最后 push | 处置 |
-|---|---|---|---|---|
-| dsh-video-understand | ilps2/dsh-video-understand | 12 | 2026-08-24 | 近两月停更、issue 无人回，打补丁 |
+| 插件（包名） | 中文名 | 能用来干嘛 | 仓库 | ★ | 最后 push | 处置 |
+|---|---|---|---|---|---|---|
+| dsh-video-understand | 视频理解 | B站/BV/本地视频丢进去，抽字幕与画面轨迹，出摘要和问答；引擎自带，免配 key。 | ilps2/dsh-video-understand | 12 | 2026-08-24 | 近两月停更、issue 无人回，打补丁 |
+
+这张表不是手抄的：中文名与「能用来干嘛」存在 `lib/targets.js`，`node scripts/patch.mjs list` 打印的是同一份。**新增补丁时同步那个文件**，否则 `list` 少印两行——不报错，只是不好看。
 
 ## 用法
 

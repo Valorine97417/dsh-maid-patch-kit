@@ -27,6 +27,7 @@ import process from 'node:process'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { listPatches, inspectProfile, describe as describeRows, installedVersion } from '../lib/selfcheck.js'
+import { targetOf } from '../lib/targets.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '..')
@@ -158,6 +159,16 @@ function cmdList() {
     const installed = installedVersion(path.join(profile, 'node_modules', patch.packageName))
     const mark = installed === undefined ? '（未装）' : installed === patch.version ? '（版本吻合）' : `（已装 ${installed} —— 需 upgrade）`
     console.log(`  ${patch.name}  ${mark}`)
+    // 元信息在 lib/targets.js。漏写条目只是少印两行，不影响安装与体检。
+    const meta = targetOf(patch.packageName)
+    if (meta.title || meta.summary) {
+      console.log(`    插件：${meta.title ?? '（未登记中文名）'}${meta.summary ? ` —— ${meta.summary}` : ''}`)
+    }
+    if (meta.repo || meta.reason) {
+      const repo = meta.repo ? `上游：${meta.repo}` : ''
+      const reason = meta.reason ? `收录理由：${meta.reason}` : ''
+      console.log(`    ${[repo, reason].filter(Boolean).join('    ')}`)
+    }
     console.log(`    目标：${patch.packageName}@${patch.version}   ${patch.bytes} 字节`)
     console.log(`    sha256：${patch.sha256}`)
   }
