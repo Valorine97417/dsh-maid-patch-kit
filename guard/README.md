@@ -57,6 +57,7 @@
 - `boot-guard.ps1`：启动形态改为「根目录有 `DeepSeek Harness.exe` 就起桌面壳（无参数），没有才退回 `cmd.exe /d /s /c "<root>\node_modules\.bin\dsh.cmd" web`」；`$Port = 0` / `$Profile = ""` 表示自动探测；新增 `Test-PortHealth()`（**401 判活**——`Invoke-WebRequest` 遇 401 会抛异常，从 `$_.Exception.Response.StatusCode` 读码）；`Resolve-Node()` 三级探测 node。
 - `boot-guard.sh` / `rollback.cmd` / `guard-cli.js`：默认 profile 与端口一并跟探测器走。
 - `guard-cli.js` 的 `health` / `status` 用 `probeHealth()`，逐条打印被排除的候选端口。
+- `load-drill.js`（自测）：拿假 ctx 调 `apply()`，确认它在「什么都拿不到」和「服务齐全」两种情况下都不抛——真插件最致命的失效方式不是功能坏掉，而是 apply() 抛错把整个 profile 拖下水。同时用临时 DSH_HOME 验证 pre-tool 钩子**真留下了 `auto-before-install` 快照**，并单独构造一个坏掉的 profiles 目录，确认存档失败时钩子仍然静默（安全网不能反过来堵死安装）。
 
 ## 安装
 
@@ -67,7 +68,8 @@ node guard/scripts/guard-cli.js list --profile desktop        # 列快照
 node guard/scripts/guard-cli.js health                        # 多端口探活
 node guard/scripts/guard-cli.js status                        # 健康 + 待处理事故
 node guard/scripts/guard-cli.js quarantine --list             # 看被隔离的插件
-node guard/scripts/smoke-test.js                              # 16 项自测，末行应打印 ALL PASS
+node guard/scripts/smoke-test.js                              # 快照/回退/解析 16 项自测，末行应打印 ALL PASS
+node guard/scripts/load-drill.js                              # 宿主加载演练，13 项，末行应打印 ALL PASS
 ```
 
 接入桌面端 profile：`package.json` 的 `dependencies` 加 `"dsh-maid-guard": "link:<本仓>/guard"`，`dsh.profile.bundles` 加 `"dsh-maid-guard"`，然后 `pnpm install`。重装或删除走反向操作。
@@ -98,7 +100,7 @@ node guard/scripts/smoke-test.js                              # 16 项自测，�
 
 - **不改上游仓库**。本目录是接管后的独立正本，上游哪天复活了，比对 `README.upstream.md` 描述的机制差异再决定是否合并回去。
 - **rc.2 上插件配置卡不存在**。`keepSnapshots` 在 rc.2 只能通过设置页「备份管理」里的输入框或 `guard-cli.js keep` 改；`settingsScope` 那条路留着给将来版本。
-- `smoke-test.js` 在临时目录里造 `.dsh-home` 跑，不碰真实快照。
+- `smoke-test.js` 与 `load-drill.js` 都在临时目录里造 DSH_HOME 跑，不碰真实快照。
 - 本包只面向本机 desktop profile，不试图做成通用工具。
 
 ## License

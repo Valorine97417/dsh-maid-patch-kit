@@ -47,7 +47,8 @@ node scripts/patch.mjs verify               # 只核对：登记、hash、落盘
 node scripts/patch.mjs remove               # 撤销登记与补丁文件，再 pnpm install
 node scripts/patch.mjs upgrade              # 上游升版后重做补丁（--to <版本> 可指定）
 node scripts/venv.mjs                       # 补 dsh-video-understand 的 Python 运行时
-node guard/scripts/smoke-test.js            # 接管包的 16 项自测
+node guard/scripts/smoke-test.js            # 接管包：快照/回退/解析 16 项自测
+node guard/scripts/load-drill.js            # 接管包：宿主加载演练，确认 apply() 绝不抛
 ```
 
 改完补丁要**重启 DSH** 才生效（宿主在启动时加载插件）。
@@ -100,7 +101,8 @@ node guard/scripts/guard-cli.js profiles                    # 看有哪些 profi
 node guard/scripts/guard-cli.js snapshot --profile desktop   # 存一份档
 node guard/scripts/guard-cli.js list --profile desktop       # 列快照
 node guard/scripts/guard-cli.js health                       # 多端口探活
-node guard/scripts/smoke-test.js                             # 16 项自测
+node guard/scripts/smoke-test.js                             # 快照/回退/解析 16 项自测
+node guard/scripts/load-drill.js                             # 宿主加载演练（apply 不抛 + 钩子真存档）
 ```
 
 快照落在 `~/.dsh/rollbacks/<profile>/<stamp>/`，含 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`cordis.yml`、`cordis.patch.yml` 五个文件 + `manifest.json`。装插件（`plugin_install` / `plugin_uninstall` / `plugin_toggle`）前会自动先存一份 `auto-before-install`。

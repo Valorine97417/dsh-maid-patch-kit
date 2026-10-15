@@ -36,7 +36,7 @@
     "dsh-guard": "./scripts/guard-cli.js"
   },
   "scripts": {
-    "test": "node scripts/smoke-test.js"
+    "test": "node scripts/smoke-test.js && node scripts/load-drill.js"
   },
   "engines": {
     "node": ">=18"
