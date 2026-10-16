@@ -1,6 +1,7 @@
 {
   "name": "dsh-maid-patch-kit",
   "description": "DSH 小困插件 · 第三方插件维护：给社区插件打不阻碍上游更新的维护补丁，每次启动体检补丁是否还活着；上游停更的整包接管。",
+  "icon": "assets/plugin-icon.png",
   "version": "0.1.0",
   "type": "module",
   "main": "index.js",
@@ -22,8 +23,9 @@
     "patches",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
-  ],
+    "LICENSE",
+      "assets/plugin-icon.png"
+    ],
   "exports": {
     ".": "./index.js",
     "./lib/selfcheck.js": "./lib/selfcheck.js",
