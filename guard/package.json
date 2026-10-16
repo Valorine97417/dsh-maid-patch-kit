@@ -1,7 +1,8 @@
 {
   "name": "dsh-maid-guard",
   "description": "DSH 小困插件 · 插件守护：装插件前后自动存档 profile，崩了能一键回退；上游停更后由小困接管，适配桌面端。",
-  "version": "0.3.2-fork.1",
+  "icon": "assets/plugin-icon.png",
+  "version": "0.3.2-fork.2",
   "type": "module",
   "main": "./index.js",
   "license": "MIT",
@@ -21,6 +22,7 @@
     "client.js",
     "src",
     "scripts",
+    "assets/plugin-icon.png",
     "cordis.patch.yml",
     "README.md",
     "README.upstream.md",
