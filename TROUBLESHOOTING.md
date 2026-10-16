@@ -353,3 +353,19 @@ node guard/scripts/load-drill.js     # 宿主加载演练 13 项，末行 ALL PA
 2. 补丁内容改了，**同步改** `lib/selfcheck.js` 的 `APPLIED_MARKERS`——判据不跟着改，体检就会说谎。
 3. 新增特征串挑**只在补丁里出现**的字符串（`_gateway_config`、`PYTHONUTF8`、文件头 BOM 都属于此类）；`type: 'string'` 这种上游本来就有的写法不能当判据（原版里有 18 处）。
 4. 动手前后各存一次档（`guard-cli.js snapshot`），别在没退路的时候试。
+
+### 6.6 给「所有插件」做批量改动时，别只按仓目录列——漏掉子目录里的接管包
+
+**症状**：2026-10-16 给八个小困插件统一换面板图标，七个仓根目录的都换好了，插件面板里 `dsh-maid-guard` 依然是默认蓝蝴蝶。老大照截图一眼逮住。
+
+**原因**：`dsh-maid-guard` **不住在仓根目录**，它住在本仓的 `guard/` 子目录（profile 侧走 `link:` 软链挂载，见 1.4/1.5）。按「八仓目录」逐个加图标，子目录里的包天然不进枚举。同型漏网还出现在 package.json 的 `files` 白名单上——不把 `assets/plugin-icon.png` 列进去，npm 分发时图标会被打包排除，换机器就掉图。
+
+**解法**：枚举小困插件**一律走文件系统真值，不走目录印象**：
+
+```bash
+find . -maxdepth 3 -name package.json -not -path "*/node_modules/*" -not -path "*/.git/*"
+```
+
+对每个结果读 `icon` 字段判断是否漏。当前实况是**「八个仓 + 一个子目录包」**（guard 是 patch-kit 接管上游 `dsh-plugin-guard` 更名而来，独立 package.json 与版本号 `0.3.2-fork.N`）。补齐三处：图标文件、`"icon": "assets/plugin-icon.png"`、`files` 白名单加入该路径。
+
+**验证方式**：`node -e "const p=require('./guard/package.json');console.log(p.icon,p.files.includes('assets/plugin-icon.png'))"` 两项都为真；`pnpm pack --dry-run --config.ignore-scripts=true` 的 Tarball Contents 里出现 `assets/plugin-icon.png`；重启 DSH 后面板该图标已换（图标是启动时读的）。
