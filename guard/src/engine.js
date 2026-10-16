@@ -240,9 +240,21 @@ export function diagnoseCulprit(profile) {
   return { id: null, name: names[0] }
 }
 
+/** cordis.patch.yml 顶层行 id 的允许字符集（包名与行 id 的实际形态：字母数字
+ * 加 @ / . _ -），并禁止 `..`（路径穿越形态）。id 会被原样拼进 YAML 块
+ * （`- id: ${id}`），收窄成这个白名单，带换行/冒号/空白的输入进不来，
+ * 坏不了 patch 文件。 */
+const PATCH_ID_RE = /^[a-z0-9@/._-]+$/i
+
+const isValidPatchId = (id) =>
+  typeof id === 'string' && id !== '' && PATCH_ID_RE.test(id) && !id.includes('..')
+
 /** Disable a patch-row plugin by appending a `disabled: true` override to the
  * profile's cordis.patch.yml, and record it in guard/quarantine.json. */
 export function quarantinePlugin(profile, id) {
+  if (!isValidPatchId(id)) {
+    return { ok: false, id, error: `拒绝隔离：插件 id 含非法字符（${String(id)}），只允许字母数字与 @ / . _ -` }
+  }
   const dir = profileDir(profile)
   const patchPath = join(dir, 'cordis.patch.yml')
   const block = `- id: ${id}\n  disabled: true\n`

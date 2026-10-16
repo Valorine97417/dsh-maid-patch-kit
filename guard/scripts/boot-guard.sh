@@ -88,13 +88,33 @@ wait_healthy() {
   return 1
 }
 
+# Stay attached: block until the server process exits, so launchers that kill
+# the process group on window close keep their close-to-quit semantics (the ps1
+# side's Wait-Process). `wait` cannot do this — setsid detached the server, so
+# it is not a child of this shell and `wait` returns immediately. Poll liveness
+# instead. A lost/invalid pid degrades to not attaching (log it, move on).
+wait_attached() {
+  local pid="$1"
+  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    log "cannot attach to server pid '$pid'; not staying attached"
+    return 0
+  fi
+  log "staying attached to server pid $pid"
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 2
+  done
+}
+
 start_server() {
+  # setsid 必须留在本 shell 里后台执行：`( setsid ... & )` 把进程藏进子壳，
+  # $! 拿到的是空的/过期的 PID，stop_server 与附着等待全都对不上号（ps1 版
+  # 用 Start-Process -PassThru 拿的是真 PID，语义对齐从这里开始）。
   if [ -n "${DSH_GUARD_LAUNCH:-}" ] && [ -x "${DSH_GUARD_LAUNCH}" ]; then
-    ( setsid "$DSH_GUARD_LAUNCH" >"$SERVER_OUT" 2>"$SERVER_ERR" < /dev/null & )
+    setsid "$DSH_GUARD_LAUNCH" >"$SERVER_OUT" 2>"$SERVER_ERR" < /dev/null &
   else
     local dsh_cmd="$HARNESS_ROOT/node_modules/.bin/dsh"
     [ -x "$dsh_cmd" ] || dsh_cmd="dsh"
-    ( setsid "$dsh_cmd" web >"$SERVER_OUT" 2>"$SERVER_ERR" < /dev/null & )
+    setsid "$dsh_cmd" web >"$SERVER_OUT" 2>"$SERVER_ERR" < /dev/null &
   fi
   echo $!
 }
@@ -124,7 +144,7 @@ if wait_healthy "$FIRST_WAIT_SEC"; then
   set_status OK first-attempt
   # Stay attached so launchers that kill the process group on window close
   # keep their close-to-quit semantics.
-  wait
+  wait_attached "$PID"
   log "server exited; boot guard done"
   exit 0
 fi
@@ -145,7 +165,7 @@ fi
 guard incident --kind boot-failure
 
 if healthy; then
-  wait
+  wait_attached "$PID2"
   log "server exited; boot guard done"
   exit 0
 fi

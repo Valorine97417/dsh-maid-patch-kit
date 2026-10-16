@@ -22,6 +22,7 @@ import path from 'node:path'
 import os from 'node:os'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
+import { pythonCandidates } from './runtime-paths.mjs'
 
 const has = flag => process.argv.includes(flag)
 function argValue(flag) {
@@ -34,11 +35,12 @@ const VENV_PACKAGES = Object.freeze([
   { package: 'dsh-video-understand', requirements: 'engine/requirements.txt' },
 ])
 
-/** DSH 自带的 Python。两个落点都试，谁在就用谁。 */
-const PYTHON_CANDIDATES = [
-  'C:/Users/Kayle/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/python/python.exe',
-  'D:/DeepSeek Harness/resources/runtime/primary-runtime/dependencies/python/python.exe',
-]
+/**
+ * DSH 自带的 Python，候选按优先级排：~/.dsh 下的预建 runtime（homedir 推导）、
+ * 安装根下的 runtime（HARNESS_ROOT 环境变量或自带 node 反推，见 runtime-paths.mjs）。
+ * 两个落点都试，谁在就用谁；都不在走 --python / 报错兜底。
+ */
+const PYTHON_CANDIDATES = pythonCandidates()
 
 const MIRROR = 'https://pypi.tuna.tsinghua.edu.cn/simple'
 

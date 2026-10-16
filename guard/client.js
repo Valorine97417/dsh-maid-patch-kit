@@ -294,7 +294,7 @@ window.__ModuleLoader__.load({
     // root-scope slot (shell.overlay).
     function BootHeartbeat() {
       React.useEffect(() => {
-        try { fetch('/guard/api/booted', { method: 'POST' }).catch(() => {}) } catch { /* best effort */ }
+        try { fetch('/guard/api/booted', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).catch(() => {}) } catch { /* best effort */ }
       }, [])
       return null
     }

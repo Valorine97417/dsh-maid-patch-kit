@@ -200,7 +200,11 @@ async function main() {
         console.error(`插件 ${id} 不是 cordis.patch.yml 管理的可隔离插件(无法通过禁用行安全处理)`)
         return 1
       }
-      quarantinePlugin(profile, id)
+      const q = quarantinePlugin(profile, id)
+      if (!q || q.ok === false) {
+        console.error(q && q.error ? q.error : `拒绝隔离插件 ${id}`)
+        return 1
+      }
       writeQuarantineMarker(id, row.name)
       console.log(`已隔离插件 ${row.name} (id: ${id}): 已在 cordis.patch.yml 追加 disabled: true`)
       return 0

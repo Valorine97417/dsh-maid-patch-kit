@@ -53,7 +53,7 @@
 
 **症状**：
 
-```
+```text
 ✗ Lockfile failed supply-chain policy check (51 entries in 3.7s)
 [ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:
 billion-context@0.1.197 was published at 2026-10-14T08:34:39.130Z, within the minimumReleaseAge cutoff (2026-10-13T12:36:36.937Z)
@@ -83,7 +83,7 @@ node "D:/DeepSeek Harness/resources/runtime/pnpm/bin/pnpm.cjs" install --config.
 
 **解法**：`node scripts/venv.mjs`（幂等：缺就建、有就核对；`--force` 删了重建，`--verify` 只看状态）。它用 DSH 自带的 Python 3.12 预建，pip 走 `https://pypi.tuna.tsinghua.edu.cn/simple`。找不到自带 Python 时按它打印的提示传 `--python <路径>`（3.9–3.13 均可）。自带 Python 的两个候选落点：
 
-```
+```text
 C:/Users/Kayle/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/python/python.exe
 D:/DeepSeek Harness/resources/runtime/primary-runtime/dependencies/python/python.exe
 ```
@@ -108,7 +108,7 @@ D:/DeepSeek Harness/resources/runtime/primary-runtime/dependencies/python/python
 
 **症状**：
 
-```
+```text
 [ERR_PNPM_UNUSED_PATCH] ...
 ```
 
@@ -187,7 +187,7 @@ install 直接停住；`node scripts/patch.mjs verify` 打印 `✗ 版本：装�
 
 **症状**：
 
-```
+```text
 [ERR_PNPM_EDIT_DIR_NOT_EMPTY] The directory C:\Users\Kayle\.dsh\profiles\desktop\node_modules\.pnpm_patches\<包>@<版本> is not empty
 Either run `pnpm patch-commit "C:\Users\Kayle\.dsh\profiles\desktop\node_modules\.pnpm_patches\<包>@<版本>"` to commit or delete it
 ```
@@ -204,7 +204,7 @@ Either run `pnpm patch-commit "C:\Users\Kayle\.dsh\profiles\desktop\node_modules
 
 **症状**：`verify` 打印
 
-```
+```text
 ✗ lockfile hash 与补丁正本不符
     正本：e09ed330c4e244254f1f3d39e27c14c6cd21b03ab110f7dc7a0bfc674a1d8aba
     锁内：<另一串 64 位 hex>
@@ -232,7 +232,7 @@ Either run `pnpm patch-commit "C:\Users\Kayle\.dsh\profiles\desktop\node_modules
 
 **原因**：profile 解析兜底值是 `~/.dsh/profiles/desktop`；新设备上 profile 可能叫别的名字，或 `DSH_PROFILE_DIR` 指向了不存在的目录（**目录必须存在才会被采用**，否则静默落到兜底值）。
 
-**解法**：显式指定——`node scripts/patch.mjs verify --profile C:\path\to\profile`；或先设 `DSH_PROFILE_DIR` 且确认它 exist。`scripts/venv.mjs` 同样支持 `--profile`。
+**解法**：显式指定——`node scripts/patch.mjs verify --profile C:\path\to\profile`；或先设 `DSH_PROFILE_DIR` 且确认它存在。`scripts/venv.mjs` 同样支持 `--profile`。
 
 **验证方式**：命令回显的 `profile：` 一行就是它实际用的目录；与 `%USERPROFILE%\.dsh\profiles\` 下的真实目录名一致。
 
@@ -248,7 +248,7 @@ Either run `pnpm patch-commit "C:\Users\Kayle\.dsh\profiles\desktop\node_modules
 
 **解法**：恢复时把 `.patch-backups/` 里的 `*.bak-patchkit-<stamp>` 复制回 profile 原文件名，再 `pnpm install`。当前机器上躺着两代：
 
-```
+```text
 .patch-backups/pnpm-workspace.yaml.bak-patchkit-20261014161717
 .patch-backups/pnpm-lock.yaml.bak-patchkit-20261014161717
 .patch-backups/pnpm-workspace.yaml.bak-patchkit-20261014203538
@@ -358,7 +358,7 @@ node guard/scripts/load-drill.js     # 宿主加载演练 13 项，末行 ALL PA
 
 **症状**：2026-10-16 给八个小困插件统一换面板图标，七个仓根目录的都换好了，插件面板里 `dsh-maid-guard` 依然是默认蓝蝴蝶。老大照截图一眼逮住。
 
-**原因**：`dsh-maid-guard` **不住在仓根目录**，它住在本仓的 `guard/` 子目录（profile 侧走 `link:` 软链挂载，见 1.4/1.5）。按「八仓目录」逐个加图标，子目录里的包天然不进枚举。同型漏网还出现在 package.json 的 `files` 白名单上——不把 `assets/plugin-icon.png` 列进去，npm 分发时图标会被打包排除，换机器就掉图。
+**原因**：`dsh-maid-guard` **不住在仓根目录**，它住在本仓的 `guard/` 子目录（profile 侧走 `link:` 软链挂载，见 1.2/1.5）。按「八仓目录」逐个加图标，子目录里的包天然不进枚举。同型漏网还出现在 package.json 的 `files` 白名单上——不把 `assets/plugin-icon.png` 列进去，npm 分发时图标会被打包排除，换机器就掉图。
 
 **解法**：枚举小困插件**一律走文件系统真值，不走目录印象**：
 

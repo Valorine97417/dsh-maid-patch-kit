@@ -26,16 +26,20 @@ import os from 'node:os'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { listPatches, inspectProfile, describe as describeRows, installedVersion } from '../lib/selfcheck.js'
+import { listPatches, inspectProfile, inspectApplied, describe as describeRows, installedVersion } from '../lib/selfcheck.js'
 import { targetOf, targetsWithStatus } from '../lib/targets.js'
+import { bundledPnpm } from './runtime-paths.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '..')
 const PATCH_DIR = path.join(REPO, 'patches')
 const BACKUP_DIR = path.join(REPO, '.patch-backups')
 
-/** DSH 自带的 pnpm。找不到就退回 PATH 上的 pnpm。 */
-const BUNDLED_PNPM = 'D:/DeepSeek Harness/resources/runtime/pnpm/bin/pnpm.cjs'
+/**
+ * DSH 自带的 pnpm。从安装根（HARNESS_ROOT 环境变量或自带 node 反推，见
+ * runtime-paths.mjs）推导；推导不出就退回 PATH 上的 pnpm。
+ */
+const BUNDLED_PNPM = bundledPnpm()
 
 const has = flag => process.argv.includes(flag)
 function argValue(flag) {
@@ -116,7 +120,7 @@ function removePatchedDependency(text, key) {
 const POLICY_OVERRIDE_ARGS = ['--config.minimumReleaseAge=0']
 
 function spawnPnpm(args) {
-  const useBundled = fs.existsSync(BUNDLED_PNPM)
+  const useBundled = BUNDLED_PNPM !== undefined && fs.existsSync(BUNDLED_PNPM)
   const command = useBundled ? process.execPath : 'pnpm'
   const argv = useBundled ? [BUNDLED_PNPM, ...args] : args
   console.log(`\n$ pnpm ${args.join(' ')}   （cwd: ${profile}）`)
@@ -452,11 +456,15 @@ function cmdUpgrade() {
       continue
     }
 
-    // 幂等：这棵树若已含补丁特征（比如上次跑到一半），就别再贴第二遍。
-    const already = inspectProfile(profile, PATCH_DIR).rows
-      .find(row => row.patch.base === patch.base)
-    if (already && already.applied.every(item => item.state === 'applied')) {
-      console.log('  这棵树已经含补丁特征，跳过重放（幂等）——直接 patch-commit 收口。')
+    // 幂等：staging 树若已含补丁特征（上次 git apply 成功但 patch-commit 失败，
+    // pnpm patch 会复用同一个临时目录），就别再贴第二遍——git apply 对已应用
+    // 的补丁会直接报错。判据必须打在 staging 树上（inspectApplied），不能查
+    // profile：profile 里装的是旧版包，永远带着旧补丁特征，查它会把「上游原版
+    // 的干净 staging」误判成已打补丁，跳过 git apply 后 patch-commit 收口的
+    // 就是一棵没打补丁的树——空 diff 补丁入库，全部修复静默清空。
+    const appliedInStaging = inspectApplied(staging, patch.packageName)
+    if (appliedInStaging.length > 0 && appliedInStaging.every(item => item.state === 'applied')) {
+      console.log('  staging 树已含补丁特征，跳过重放（幂等）——直接 patch-commit 收口。')
     } else {
       const apply = spawnSync('git', ['apply', '-p1', '--whitespace=nowarn', patch.file], {
         cwd: staging, encoding: 'utf8', shell: false,

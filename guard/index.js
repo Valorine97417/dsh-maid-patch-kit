@@ -54,10 +54,18 @@ function send(res, data, status = 200) {
   res.end(JSON.stringify(data))
 }
 
+// 读体上限：本 API 的合法 body（profile/stamp/keep/message）都在几百字节量级，
+// 1MB 绰绰有余；超限一律按空 body 处理，不给恶意超大报文耗内存的机会。
+const MAX_BODY_BYTES = 1 << 20
+
 function readBody(req) {
   return new Promise((resolve) => {
     const chunks = []
-    req.on('data', (c) => chunks.push(c))
+    let size = 0
+    req.on('data', (c) => {
+      size += c.length
+      if (size <= MAX_BODY_BYTES) chunks.push(c)
+    })
     req.on('end', () => {
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'))
@@ -67,6 +75,53 @@ function readBody(req) {
     })
     req.on('error', () => resolve({}))
   })
+}
+
+// ── 跨站防线 ──
+// /guard/api/* 不能假设宿主一定把它挡在 token 墙后面，自己把浏览器侧的跨站
+// 请求拒掉。威胁模型：恶意网页跨站 POST /guard/api/rollback 之类的写操作。
+// 浏览器发起的跨站 fetch/XHR/form 一定带 Origin 头（或 Referer）；而跨站
+// form / no-cors fetch 的 Content-Type 只能是 urlencoded / text / multipart，
+// 到不了 application/json。所以两道闸：带 Origin/Referer 必须同源，写方法必须
+// application/json。非浏览器客户端（boot-guard 的 curl/Invoke-WebRequest 探测、
+// 本机脚本）不带这些头，走放行分支——它们本就在宿主机上，防线管不着也不必管。
+
+/** 请求来源与宿主同源吗？无法判定来源时从严（false），非浏览器请求（无
+ * Origin 也无 Referer）从宽（true）——前者是可疑信号，后者管不到。 */
+function sameOrigin(req) {
+  const host = req.headers.host
+  if (typeof host !== 'string' || host === '') return false
+  const origin = req.headers.origin
+  if (typeof origin === 'string' && origin !== '') {
+    if (origin === 'null') return false // 沙箱化 iframe / file:// 页面
+    try { return new URL(origin).host === host } catch { return false }
+  }
+  const referer = req.headers.referer
+  if (typeof referer === 'string' && referer !== '') {
+    try { return new URL(referer).host === host } catch { return false }
+  }
+  return true
+}
+
+/** 写方法（POST/PUT/PATCH/DELETE）只收 application/json（允许 charset 后缀）。 */
+function isJsonContentType(req) {
+  const ct = req.headers['content-type']
+  if (typeof ct !== 'string') return false
+  return ct.split(';')[0].trim().toLowerCase() === 'application/json'
+}
+
+/** 把 API handler 包上跨站闸。GET/HEAD 只查来源；写方法再查 Content-Type。 */
+function guarded(handler) {
+  return async (req, res) => {
+    if (!sameOrigin(req)) {
+      return send(res, { ok: false, error: 'cross-origin request rejected' }, 403)
+    }
+    const write = req.method !== 'GET' && req.method !== 'HEAD'
+    if (write && !isJsonContentType(req)) {
+      return send(res, { ok: false, error: 'Content-Type must be application/json' }, 415)
+    }
+    return handler(req, res)
+  }
 }
 
 // ── API handlers ──
@@ -195,12 +250,12 @@ export function apply(ctx) {
   // 不到这些路由，也不会报错。
   ctx.inject(['webServer'], (wctx) => {
     const routes = [
-      { kind: 'exact', path: '/guard/api/state', handler: handleState },
-      { kind: 'exact', path: '/guard/api/snapshot', handler: handleSnapshot },
-      { kind: 'exact', path: '/guard/api/rollback', handler: handleRollback },
-      { kind: 'exact', path: '/guard/api/keep', handler: handleKeep },
-      { kind: 'exact', path: '/guard/api/booted', handler: handleBooted },
-      { kind: 'exact', path: '/guard/api/render-error', handler: handleRenderError },
+      { kind: 'exact', path: '/guard/api/state', handler: guarded(handleState) },
+      { kind: 'exact', path: '/guard/api/snapshot', handler: guarded(handleSnapshot) },
+      { kind: 'exact', path: '/guard/api/rollback', handler: guarded(handleRollback) },
+      { kind: 'exact', path: '/guard/api/keep', handler: guarded(handleKeep) },
+      { kind: 'exact', path: '/guard/api/booted', handler: guarded(handleBooted) },
+      { kind: 'exact', path: '/guard/api/render-error', handler: guarded(handleRenderError) },
     ]
     for (const route of routes) {
       wctx.effect(() => wctx.webServer.register(route), `guard: ${route.path} route`)
