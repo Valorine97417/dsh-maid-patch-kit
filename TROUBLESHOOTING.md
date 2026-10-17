@@ -2,9 +2,9 @@
 
 > 用途：本仓（第三方插件维护：给社区插件打不阻碍上游更新的维护补丁 + 上游停更的整包接管）在**新设备上安装、迁移、重装**时的参考。
 > 每条按「症状 → 原因 → 解法 → 验证方式」写，症状照抄实测报错。只在有据可查时下结论，不确定的标「（待核）」。
-> 素材来源：本仓源码与注释（`scripts/patch.mjs`、`lib/selfcheck.js`、`README.md`、`guard/`）、记忆库、2026-10-14 ~ 10-16 的会话原文与终端输出。
+> 素材来源：本仓源码与注释（`scripts/patch.mjs`、`lib/selfcheck.js`、`README.md`、`guard/`）、记忆库、2026-10-14 ~ 10-18 的会话原文与终端输出。
 >
-> 最后更新 2026-10-16
+> 最后更新 2026-10-18
 
 本机基线（写文档时实查，供对照）：
 
@@ -99,6 +99,8 @@ D:/DeepSeek Harness/resources/runtime/primary-runtime/dependencies/python/python
 **解法**：整包接管为本仓 `guard/`（改动面横跨宿主半、客户端半、CLI 与守护脚本，pnpm patch 装不下；且没有新版可跟，补丁那条路对停更包本就无效）。关键改动：新增 `src/profile.js` 收拢环境知识（`detectProfile()` / `portCandidates()` → `[DSH_GUARD_PORT?, 配置值, 19387, 3080]`）；去掉唯一运行时依赖 `js-yaml`（桌面端 `node_modules/@deepseek-ai` 是**空目录**，裸名只有 `schemastery`，静态 import 会让整个插件加载失败）；`index.js` 的 schemastery 改动态可选加载、`settings.register` 改软探测；健康判据放宽到 2xx–4xx（**401 也算活**，桌面端根路径要鉴权 token）。接入方式同 1.2 的 `link:` + bundles。
 
 **验证方式**：`node guard/scripts/smoke-test.js`（16 项自测）与 `node guard/scripts/load-drill.js`（宿主加载演练，13 项），末行都应是 `ALL PASS`；`node guard/scripts/guard-cli.js status` 看健康 + 待处理事故。
+
+> `guard/` 是**独立包**（`dsh-maid-guard`，单独一套 `package.json` 与 `0.3.2-fork.N` 版本号），它自己的坑另有子册：[`guard/TROUBLESHOOTING.md`](guard/TROUBLESHOOTING.md)（快照/回滚、事故检测与隔离、守护启动脚本）。本册只管 patch-kit 主体。
 
 ---
 
