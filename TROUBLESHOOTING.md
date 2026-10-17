@@ -167,6 +167,20 @@ install 直接停住；`node scripts/patch.mjs verify` 打印 `✗ 版本：装�
 
 **验证方式**：`verify` 全绿后重启 DSH，`video_understand` 回到工具列表；本地视频与裸 BV 号各跑一次。
 
+### 2.5 重复皮肤包回潮：装回 `maid-atelier` 就顶掉 scenery 的视频层
+
+**症状**：装上一个不相关的插件、或从旧笔记里照抄依赖之后，出现以下之一：deep-sea 女仆工坊的蕾丝/侧栏/素材重复叠两层（同一张工坊画盖两层）；或者反过来，视频层的路由整批不见了——页面上「就是少了点什么」，日志里只有一行 `warning`，**没有报错**。
+
+**原因**：`@smalltailqwq/dsh-client-ui-skin-maid-atelier` 与 `dsh-maid-scenery` 内置的主题层**是同一份东西**——`client.js` 字节级相同、32 个素材一个不差、`skin.json` 的 `id` 同为 `maid-atelier`。两套同时在场就重复注入、互相打架；而且这个包的路由会赢过 scenery 内置视频层，把它的路由整批挤掉，而 scenery 把路由注册包在 `try/catch` 里，失败只落一行 warning。2026-10-17 实打实撞过一次，处置是：内置层留作唯一，独立包卸掉。
+
+**为什么它不在 `TARGETS` 里**：这个包**不修、不拦**——它没有补丁可打，作用只是「这个包名不该出现在 profile 里」。所以它落在 `lib/targets.js:67-79` 的 `DUPLICATES`，由 `duplicates()` 在启动时提醒一句。
+
+**解法**：按三处核查该包是否回潮——profile 的 `package.json`（deps）、`bundles`、`node_modules`，**任一处命中即为回潮**，从三处一并摘掉后重装。想做防御就把它写进 `lib/targets.js` 的 `DUPLICATES` 之外再确认一次 `duplicates()` 有没有被启动流程调用（`package.json` 的 `files` 与 `index.js` 的初始化段）。
+
+**验证方式**：重启后启动日志**不再**出现 `[patch-kit]` 对 maid-atelier 的提醒行；侧栏/立绘只有一层；视频层的路由回来（`video_understand` 相关的页面元素恢复）。
+
+来源：`lib/targets.js:67-79`（`DUPLICATES` 定义与 2026-10-17 事件原委）、`lib/targets.js:86`（`duplicates()`）。
+
 ---
 
 ## 三、打补丁的常见失败
