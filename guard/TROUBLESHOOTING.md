@@ -114,6 +114,30 @@
 
 ---
 
+### 1.10 把 `index.js` 从 `src/` 提到包根之后，插件整个加载失败（相对 import 没跟着改）
+
+**症状**：把 ESM 入口 `src/index.js` 提升到包根 `index.js`（为了让宿主按 `dsh.entry` 找到入口）之后重启，插件不进已加载列表，日志里是：
+
+  ```text
+  ERR_MODULE_NOT_FOUND: Cannot find module '.../guard/engine.js'
+  imported from .../guard/index.js
+  ```
+
+  文件明明都在，`engine.js` 也确实存在——只是不在报错说的那个位置。
+**原因**：ESM 的相对 import 是**按引用者所在目录解析**的，不是按包名或按 `src/`。`index.js` 从 `src/` 上移一层后，原来写的 `from './engine.js'` 会去找 `<包根>/engine.js`（不存在），而不是 `<包根>/src/engine.js`。**移动文件本身不会报错，只有加载时才炸**。
+**解法**：只改**上移的那一个文件**里的相对路径，把 `./engine.js` 改成 `./src/engine.js`（同批的 `incident.js`、`tools.js` 一样处理）。**`scripts/` 下的文件不用动**——`guard/scripts/guard-cli.js` 里的 `from '../src/engine.js'` 相对它自己那一层解析本来就对，动了反而错。
+**验证**：正确形态可直接对照本仓现成的 `guard/index.js:15-17`——
+
+  ```js
+  import { ... } from './src/engine.js'
+  import { ... } from './src/incident.js'
+  import { createGuardTools } from './src/tools.js'
+  ```
+
+  然后 `node --check guard/index.js` 只查语法（查不出解析错，别只靠它）；实招是 `node guard/scripts/load-drill.js` 或 `node -e "import('./guard/index.js')"`，能 import 成功才算过。
+- **教训**：`ERR_MODULE_NOT_FOUND` 里有两种信息要分开看——`Cannot find module` 后面那截是**解析后的绝对路径**，`imported from` 后面才是真正该核对的地方。先算「引用者在哪一层」，再判断 `./` 该不该带 `src/`。
+- 与 §1.7「自带依赖在桌面端解析不到」不同：那条是**裸包名**（`@deepseek-ai/schemastery`）解析不到，本条是**自己仓内的相对路径**写错。
+
 ## 二、快照与回滚
 
 ### 2.1 回滚成功了，装坏的插件还在
