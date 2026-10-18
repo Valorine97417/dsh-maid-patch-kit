@@ -237,6 +237,9 @@ Either run `pnpm patch-commit "C:\Users\Kayle\.dsh\profiles\desktop\node_modules
 
 **解法**：二选一——确认这棵树就是要的结果，就 `pnpm patch-commit "<该目录>"` 收口；否则整个目录删掉，再重跑 `upgrade`。`patch.mjs` 的 upgrade 有幂等判断（发现这棵树已含补丁特征就跳过重放，直接 commit 收口），所以「上次跑了一半」通常不会贴第二遍。
 
+- **补记（2026-10-18）：幂等判据曾经查错对象，后果是「空 diff 补丁入库、全部修复静默清空」**。本条上面那句「`patch.mjs` 的 upgrade 有幂等判断（发现这棵树已含补丁特征就跳过重放）」曾有过一个反向坑：判据早期查的是 **profile 里已装的包**（`inspectProfile(profile, PATCH_DIR)`），而 profile 里装的是**旧版**、永远带着旧补丁特征，于是「上游原版的干净 staging」被误判成「已打补丁」，跳过 `git apply` 之后 `patch-commit` 收口的就是一棵没打补丁的树。修法：判据打在 staging 树上（`inspectApplied(staging, patch.packageName)`），现行代码 `scripts/patch.mjs:488-496`，注释已就地写明这条教训；修复提交 `61eb734`（2026-10-17，diff 里把 `inspectProfile` 换成 `inspectApplied`，顺带抽出 `bundledPnpm()`）。
+- **自查手法**：`upgrade` 之后若补丁文件体积骤减，或 `verify` 报「补丁内容与期望不符」，先确认跑的是含这条修复的版本，别急着怀疑上游改代码。
+
 **验证方式**：目录被清掉或已 commit；重跑 `upgrade` 不再报 `EDIT_DIR_NOT_EMPTY`；`verify` 全绿。
 
 > 出处：这条报错是**同源兄弟仓 `dsh-maid-tts-fix` 的 upgrade 流程**实测（`dsh-xiaomi-tts：3.0.7 → 3.0.8`，2026-10-15）。patch-kit 的 `upgrade` 用同一套 `.pnpm_patches` 暂存逻辑（`scripts/patch.mjs:448`），所以判据与解法通用；patch-kit 自身是否撞过（待核）。
@@ -369,6 +372,12 @@ node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.
 **验证**：在目标子目录里落一个探针文件，读回内容一致即可（`danger-full-access` 下应当直接成功）。
 - **只读期的规避手法**：`git ls-remote origin refs/heads/main` 不写 `.git`，可用来跟远端 HEAD 比；**别用** `git rev-parse origin/main`——那是上次 fetch 的旧值，不可信。
 - ⚠️ 与 §3.4「文件被占用（EBUSY）」是两回事：那条是真有进程占着句柄，本条是策略拒绝，等多久都不会自己好。
+- **本机实测（2026-10-18）：同一族的第三种面孔——`EPERM: operation not permitted`**。Windows 上它**不是** `Access is denied` 的措辞，按关键词只搜 denied 会漏掉。同日三条，均为子代理会话写 profile 目录被策略拒：
+  - `Write failed: EPERM: operation not permitted, open '<%USERPROFILE%>\.dsh\profiles\desktop\test_probe.txt'`（10:12:35Z）；
+  - `[Mount] Failed: Error: EPERM: operation not permitted, open '<%USERPROFILE%>\.dsh\profiles\desktop\package.json.bak-vendor-bili-scroll-20261018101324'`（10:13:24Z）——肇事脚本 `_vendor/mount-bili-scroll.js` **在本机已不存在**，未取证到具体行号；
+  - `Error: EPERM: operation not permitted, mkdir 'C:\Users\<另一个用户名>'`（12:01:03Z）。
+  - 前两条与本条同机制（`workspace-write` 不放行 `$DSH_HOME/profiles/desktop`）；第三条**机制不同**——家目录/临时目录被解析到 `C:\Users\<另一个用户名>`，属路径解析错，与写入策略无关，**根因未证实**。
+- **判读要点**：见 EPERM 先分岔——错误路径落在 profile / `$DSH_HOME` 下 → 本条（策略拒绝）；错误路径在 `%TEMP%` / 家目录却指向别的用户名 → 按路径解析问题查，**别去提权**。
 
 #### 3.9.2 认证通路走不通：git https 与 curl 都拿不到凭证，只能走 node fetch + REST API
 
