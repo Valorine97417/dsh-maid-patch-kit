@@ -254,6 +254,46 @@ Either run `pnpm patch-commit "C:\Users\Kayle\.dsh\profiles\desktop\node_modules
 
 **验证方式**：命令回显的 `profile：` 一行就是它实际用的目录；与 `%USERPROFILE%\.dsh\profiles\` 下的真实目录名一致。
 
+### 3.6 profile 的 `package.json` 带 UTF-8 BOM → 宿主 `JSON.parse` 抛错，桌面端启动即死
+
+**症状**：桌面端**连启动都过不去**——桌面壳报 `DesktopHostFatalError`，关掉重启、重启机器都一样挂（不是偶发，是必挂）。`%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-host.log` 里就是这一行原文：
+
+```text
+SyntaxError: Unexpected token '﻿'
+```
+
+单引号里那个字符是**看不见的**：U+FEFF，也就是 UTF-8 BOM，文本形式写作 `'\ufeff'`。用十六进制看 `package.json` 头三字节是 `EF BB BF`；在部分编辑器里它显示成一个 `﻿` 小方块，在终端里干脆什么都没有。报错栈与启动日志里能见到 `dsh-app-boot`、`readProfileManifest`、`JSON.parse` 这几个名字。实测（2026-10-13 21:49 ~ 2026-10-18 14:41）共出现 **16 次**；其中装完 `dsh-xiaomi-tts` 之后 05:25–05:28 连炸四次，每次都起不来。
+
+**原因**：宿主启动器 `dsh-app-boot` 的 `readProfileManifest` 把 profile 下 `package.json` 的**文件原始内容直接丢给 `JSON.parse`**，不剥离 BOM。Node 的 `JSON.parse` 不认 U+FEFF——按 JSON 规范 BOM 不是合法 token，第一个字符就抛 `SyntaxError: Unexpected token '﻿'`，`readProfileManifest` 拿不到 manifest → 启动链断在这里 → `DesktopHostFatalError`。BOM 几乎总来自**写入侧**：Windows PowerShell 5.1 的 `Set-Content -Encoding UTF8` / `Out-File -Encoding UTF8` 默认加 BOM，某些编辑器勾了「带 BOM 保存」也一样。因此**任何「改 profile 的 package.json」的动作都是嫌疑犯**——装插件时写 `bundles`、手改 `cordis.yml` 周边、脚本批量改依赖，都在其中。**排查最容易走岔的地方**：PowerShell 的 `ConvertFrom-Json` 会吞掉 BOM、照常解析成功，于是人得出「文件没问题」的结论，把真因放跑（本条 lesson 的原文结论就是「排查时用 Node `JSON.parse` 而非 PS `ConvertFrom-Json`，PS 吞 BOM 掩盖真因」）。
+
+**解法**：
+
+1. **落盘一律 UTF-8 无 BOM。** Node 侧 `fs.writeFileSync(p, JSON.stringify(o, null, 2), 'utf8')` 不会写 BOM；PowerShell 侧别用 `Set-Content -Encoding UTF8`（PS 5.1 会加 BOM），改用显式无 BOM 的 .NET 写法：
+
+   ```powershell
+   [System.IO.File]::WriteAllText($p, $s, (New-Object System.Text.UTF8Encoding($false)))
+   ```
+
+2. **排查必须用 Node 的 `JSON.parse` 校验，不能用 PowerShell `ConvertFrom-Json`。** PS 吞 BOM 会掩盖真因，让人误判「文件没问题」；Node 的 `JSON.parse` 与宿主同款行为，它丢什么错，宿主就丢什么错。
+3. **已知坑**：任何「改 profile `package.json`」的动作之后（装插件写 bundles、手改 `cordis.yml` 之类、脚本改依赖），都要**复验一次无 BOM**。桌面端不会在改的时候校验，只在下一次启动时炸——中间那段「一切正常」是假象。
+4. 已经被写进 BOM 的处置：先按上面第 1 条把 BOM 剥掉（无 BOM 重写整个文件）再重启；若文件内容也已经被改坏，用 `.patch-backups/` 或 guard 快照恢复（见 4.1 / 4.3），恢复后照样复验无 BOM。
+
+**验证方式**：
+
+```bash
+# ① 查 BOM（命令形态可直接跑）
+node -e "const b=require('fs').readFileSync(process.argv[1]);console.log(b[0]===0xEF&&b[1]===0xBB&&b[2]===0xBF?'HAS BOM':'no BOM')" "C:\Users\<你>\.dsh\profiles\desktop\package.json"
+
+# ② 用 Node 的 JSON.parse 校验（与宿主同款行为，必跑）
+node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log('JSON OK')" "C:\Users\<你>\.dsh\profiles\desktop\package.json"
+```
+
+① 必须回 `no BOM`，② 必须回 `JSON OK`；② 报 `SyntaxError: Unexpected token '﻿'` 就是本条无疑。然后**重启桌面端**：宿主能起来、界面进得去，且 `crash-host.log` **没有新增行**（`Get-Item "$env:APPDATA\@deepseek-ai\dsh-desktop\logs\crash-host.log" | Select-Object LastWriteTime, Length` 的 mtime 不再变）。最后 `node scripts/patch.mjs verify` 全绿，确认这次改动没顺带弄坏别的。
+
+**未验**：① 上面两行 `node -e` 命令的现场输出本机**未留存**（本条来自 crash 日志因果定位，不是重放）；②「PS 5.1 `Set-Content -Encoding UTF8` 加 BOM / `[System.IO.File]::WriteAllText` 不加 BOM」是文档行为，本机**未做对照实验**；③「修掉 BOM 后宿主一定能起来」**未验**（现场记录只到「定位到 crash-host.log 与 BOM 的因果」，无修复后重启记录）。
+
+> 证据：记忆 lesson 0mv7779gn-96658fc535dd4fcf980bd932ec、会话候选 C6（出现 16 次，2026-10-13 21:49 ~ 2026-10-18 14:41）· 2026-10-18 补录
+
 ---
 
 ## 四、回滚与备份
