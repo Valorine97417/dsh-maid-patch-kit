@@ -405,10 +405,31 @@ node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.
 **解法**：装完 PowerShell 7 之后**重启 DSH**，别在当前会话里反复重试、也别去改 PATH 试图让它立刻生效。
 **验证**：重启后在新会话里跑 `pwsh -Command '$PSVersionTable.PSVersion'`，主版本应是 7。
 - 与 guard 册 §4.2「pnpm 命令在 Windows 上找不到」、§4.3「node 被解析到错误的一份」同类但不同因：那两条是**解析结果错**，本条是**解析结果被缓存住了**。
+#### 3.9.4 装依赖报 `ERR_PNPM_FETCH_404`：`@deepseek-ai/*` 这些宿主内建包根本不在公共 registry
+
+**症状**：`pnpm install` 直接停在这一行（原样）：
+`[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/@deepseek-ai%2Fdsh-type-meta: Not Found - 404`
+看着像网络/认证问题，于是去查代理、查 token、重试，全无效。
+
+**原因**：**不是通路问题，是这个包名在公共 registry 上确实不存在**。`@deepseek-ai/*` 是 DSH 宿主**内建**的包（随宿主一起发，不进公共 npm）。本机实测（2026-10-19）同一批请求对照：
+- `https://registry.npmjs.org/@deepseek-ai%2Fdsh-type-meta` → `HTTP 404`，响应体 `{"error":"Not found"}`
+- `https://registry.npmjs.org/@deepseek-ai%2Fdsh-web-frontend` → `HTTP 200`（`_id`、`_rev`、`name` 齐全）
+
+即 registry 通、鉴权不需要、只有部分 `@deepseek-ai/*` 名字没发布。**所以 404 是真 404，重试一万次也还是 404**。
+
+**解法**：别去修网络，改依赖口径——
+1. 先判定这个包是不是宿主内建的：看宿主安装目录里有没有它（如 `<DSH 安装目录>/resources/app.asar` 内、或 `%USERPROFILE%\.dsh` 下宿主的 node_modules），**有 → 内建，不该写进项目的 `dependencies`/`devDependencies`**。
+2. 真需要它的类型或实现，走宿主导出的入口（宿主已装好的那份）而不是自己装一份；本地开发用 `link:`/`file:` 指到宿主那份。
+3. 顺带一条同类判断：`ERR_PNPM_FETCH_404` 与认证失败（401/403）、被代理拦（`ECONNREFUSED`/超时）是三种不同结论，**先只看那一行 HTTP 状态码再决定查什么**——404 查包名，401/403 查 token，连不上才查代理。
+
+**验证**：把同一个 URL 用不经过 pnpm 的方式独立打一次（本机用的是 node 内建 `fetch`），拿到的状态码与 pnpm 报的一致即可定因——`404` 说明是包名问题，与本地网络无关。
+- **未验**：本机只核了 `dsh-type-meta`（404）与 `dsh-web-frontend`（200）两个名字，其余 `@deepseek-ai/*` 未逐个探测；也没定位是哪个 manifest 把它写进依赖的（日志止于报错，无更早的 manifest 记录）。
+- 与 §3.9.2「认证通路」分界：那条是**拿不到凭证**，本条是**凭证无所谓、包不存在**。
+
 
 ---
 
-> 本节三条的证据强度：3.9.1 有原始报错串（A）；3.9.2 有原始报错串 + 可用的替代通路（A）；3.9.3 只有现象描述与规避手法，**无原始报错串**（B）。真实用户名一律以 `%USERPROFILE%` / `<本机用户>` 代指。
+> 本节四条的证据强度：3.9.1 有原始报错串（A）；3.9.2 有原始报错串 + 可用的替代通路（A）；3.9.3 只有现象描述与规避手法，**无原始报错串**（B）；3.9.4 有原始 HTTP 状态码 + 双向对照（A），但只探了两个包名（未逐个探测，见条内未验）。真实用户名一律以 `%USERPROFILE%` / `<本机用户>` 占位。
 
 ## 四、回滚与备份
 
