@@ -232,6 +232,8 @@ Either run `pnpm patch-commit "C:\Users\Kayle\.dsh\profiles\desktop\node_modules
 1. `patches/*.patch` 被编辑过，而 profile 里那份副本与 lockfile 里的 `patch_hash` 还是旧的——这是正常流程，重打一次即可。
 2. **换行被转换**：`.patch` 的 sha256 就是 lockfile 里的 `patch_hash`，CRLF/LF 一换字节就变。本仓 `.gitattributes` 为此写了 `*.patch -text`（逐字节保持原样），其余文本 `* text=auto eol=lf`，`.sh` 强制 LF（CRLF 的 .sh 在 git-bash/WSL 下会一路报 `$'\r': command not found`）、`.cmd`/`.ps1` 强制 CRLF。生成补丁时也要显式关掉转换——同类仓实测用的是 `git -c core.autocrlf=false diff --no-color --no-ext-diff`。
 
+3. **同族但更隐蔽的一种：直接改运行包内的 JS 时，CRLF 让改动静默 0 命中**。用 `ops_replace` / `edit` 去改 `node_modules/` 里的 `pack.js` / `client.js`，如果锚点字符串按 LF 写、目标文件是 CRLF，工具会报「命中 0 次」；而短单行锚点在两边都不报错、只是不生效。这类失败最费时间的地方在于「看起来什么都没发生」——逐字节比对后才发现差异全在行尾（`node -e "console.log(JSON.stringify(line))"` 或 `od -c`）。处置：把锚点写成不带换行的单行片段，或先统一行尾再改（操作前 `git config core.autocrlf` 归零）。**未验**：本条是从工具行为归纳的，没有留下「同一锚点 LF/CRLF 两版对照」的实测记录。
+
 **解法**：情况 1 跑 `node scripts/patch.mjs install`（会同步 profile 里的补丁副本并重打）。情况 2 先查 `git config core.autocrlf` 与文件字节（`git diff --stat` 不该看到 `.patch` 有改动），必要时 `git -c core.autocrlf=false …` 重新生成补丁，再 install。
 
 **验证方式**：`verify` 里 `✓ lockfile hash 与补丁正本一致：e09ed330c4e24425…`；机械核对是 `node -e` 算正本 sha256 与 `pnpm-lock.yaml` 里 `version: 0.5.2(patch_hash=…)` 相等。
@@ -302,6 +304,15 @@ node guard/scripts/rollback.cmd                               # 一键回滚（W
 快照目录：`~/.dsh/rollbacks/<profile>/<stamp>/`（本机桌面端已有两份）。装崩了还能把肇事插件**隔离**掉先让 DSH 起来。
 
 **验证方式**：`guard-cli.js status` 打印健康端口与待处理事故；`~/.dsh/guard/logs/` 下有 `boot-*.log` / `server-*.out.log` / `incident-*.md`。
+
+### 4.4 一份补丁里混了两个目标，最后只能整份清掉（ego-browser 侧边栏美化，2026-10-15）
+
+- **症状**：本只想修「Windows profile 锁」（issue#70）这一件事，结果同一份 `.patch` 里越塞越多，涨到 45 KB 后装上出现多处非预期界面改动（配色、金框、生成背景图一起进来）；等意识到不对，已经没法只摘掉美化那部分。老大最后的要求是「直接全清掉，回到最开始的默认」，并补一句「清掉的是做右边侧栏 UI 主题界面那些噢」。
+- **原因**：五轮美化提交（`1a1f6f5` / `a454489` / `b124571` / `b62c8de` / `52bc0e0`）把配色改造、`maid-atelier` 素材复用、金框、生成背景图全塞进了同一份 `.patch`，与「只修 profile 锁」的目标混在一个交付物里。**目标一混，撤回就得整份回退**——补丁是按文件整份替换的，没有「只摘一部分」这个操作。
+- **解法**：`lib/client.js` 回到 0.8.6 原版（`163276` 字符）；补丁缩回 3.5 KB / 1 文件（sha256 `30a2fcff…`），只保留 issue#70 的修复；`chrome.mjs` 里保留 `killWindowsProfileOwners`；美化版整份归档到 `_probe/ego-patch-archive-2026-10-15/`（留证据，不从历史里消失）；新增 `_probe/patchgen-ego/mkpatch-issue70.mjs` 专用于生成这一份最小补丁。
+- **验证方式**：提交正文记录重打后补丁 sha256 与最初版一致；`lib/selfcheck.js` 里 ego 段判据缩至 1 条（只核 issue#70 的那个行为）。
+- 证据：提交 `f7ea1a0`（`revert(ego-browser): 撤回侧边栏 UI 主题美化，只留 issue#70 修复`，2026-10-15 04:36），diff 为 `patches/dsh-ego-browser@0.8.6.patch` −289 行、`lib/selfcheck.js` −31 行。
+- **教训**：一份补丁只做一件事。美化、素材复用这类「可选项」一旦和 bug 修复进同一个文件，撤回成本就从「改几行」变成「整份回滚 + 重新取证 + 归档留痕」。
 
 ---
 
@@ -385,3 +396,12 @@ find . -maxdepth 3 -name package.json -not -path "*/node_modules/*" -not -path "
 对每个结果读 `icon` 字段判断是否漏。当前实况是**「八个仓 + 一个子目录包」**（guard 是 patch-kit 接管上游 `dsh-plugin-guard` 更名而来，独立 package.json 与版本号 `0.3.2-fork.N`）。补齐三处：图标文件、`"icon": "assets/plugin-icon.png"`、`files` 白名单加入该路径。
 
 **验证方式**：`node -e "const p=require('./guard/package.json');console.log(p.icon,p.files.includes('assets/plugin-icon.png'))"` 两项都为真；`pnpm pack --dry-run --config.ignore-scripts=true` 的 Tarball Contents 里出现 `assets/plugin-icon.png`；重启 DSH 后面板该图标已换（图标是启动时读的）。
+
+### 6.7 巡检报「缺这一节」时，先看文件是不是在两次运行之间被改过
+
+- **症状**：巡检脚本报某本册子缺某一节；紧接着手工 `grep` 同一本册子，**命中 0 次**，差一点据此判定「这条从来没写过、需要补录」。再跑一次巡检，判定却翻转成「已登记」。
+- **原因**：文件在两次运行之间被改写——04:00 那次写入把这一节补进了册子，而手工 `grep` 用的是更早的读取快照（或相反：读发生在写之前）。`grep` 命中的是「跑那一刻的文件」，不是「你以为的那个版本」，两次观测之间没有任何一致性保证。
+- **解法**：定性之前先看两个真值：`Get-Item <册子> | Select-Object LastWriteTime`（写时间晚于本次巡检开始时刻 = 已有结论作废）、`git diff --stat -- <册子>`（有未提交改动 = 手上读的不是已登记版本）。两者都干净，再拿同一时刻的读取结果下结论。
+- **验证方式**：记忆 `0mvctoud1-4e4ebc50fa054005ac70e31bc0` 记录的原案——先看 `LastWriteTime` 发现 04:00 有写入，与 `git diff` 对照后判定翻转，避免了一次重复补录。
+- 证据：记忆 `0mvctoud1-4e4ebc50fa054005ac70e31bc0`（patch-kit，巡检方法论）；2026-10-18 复核。
+- **教训**：「两次工具调用结果不一致」通常不是工具坏了，是其中一次读到的是旧状态。取证类任务里，每次下判断前都要先锚定版本。
