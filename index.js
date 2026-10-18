@@ -23,7 +23,8 @@ import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { inspectProfile, describe as describeRows } from './lib/selfcheck.js'
+import { inspectProfile, describe as describeRows, inspectDuplicates, describeDuplicates } from './lib/selfcheck.js'
+import { duplicates } from './lib/targets.js'
 
 export const name = 'patch-kit'
 /** 无必需服务：纯启动自检 + 提示，不注册路由、不依赖 settings。 */
@@ -54,22 +55,37 @@ export function apply(ctx) {
     try { ctx.logger?.info?.(`[${name}] ${message}`) } catch { /* 同上 */ }
   }
 
+  // 两段体检各自独立 try：补丁那段没东西可查（patches/ 空）不该把重复层那段也带走。
+  const profile = resolveProfile()
+
   try {
-    const profile = resolveProfile()
     const patchDir = path.join(HERE, 'patches')
     const { ok, rows, patches } = inspectProfile(profile, patchDir)
 
     if (patches.length === 0) {
-      warn(`patches/ 下没有补丁正本（${patchDir}），本插件此刻什么也没做`)
-      return
-    }
-    if (ok) {
+      warn(`patches/ 下没有补丁正本（${patchDir}），补丁体检跳过`)
+    } else if (ok) {
       info(`补丁齐备：${patches.map(p => p.base).join('、')}（profile: ${profile}）`)
-      return
+    } else {
+      for (const line of describeRows(rows)) warn(line)
+      warn('补丁掉了就等于没修。修：node scripts/patch.mjs install，然后重启 DSH')
     }
-    for (const line of describeRows(rows)) warn(line)
-    warn('补丁掉了就等于没修。修：node scripts/patch.mjs install，然后重启 DSH')
   } catch (error) {
-    warn(`体检失败，跳过（不影响运行）：${error instanceof Error ? error.message : String(error)}`)
+    warn(`补丁体检失败，跳过（不影响运行）：${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  // ── 重复层：该卸的包回潮了没有 ──
+  // 与补丁相反，这类故障是「静默多出来」：多出来的那个不报错，只是把活抢走
+  // （2026-10-14 独立 dsh-video-skin 赢下路由、2026-10-17 maid-atelier 重复注入）。
+  try {
+    const rows = inspectDuplicates(profile, Object.fromEntries(duplicates()))
+    const lines = describeDuplicates(rows)
+    if (lines.length === 0) {
+      info(`重复层干净：${rows.map(row => row.packageName).join('、')} 都不在 profile 里`)
+    } else {
+      for (const line of lines) warn(line)
+    }
+  } catch (error) {
+    warn(`重复层体检失败，跳过（不影响运行）：${error instanceof Error ? error.message : String(error)}`)
   }
 }

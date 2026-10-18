@@ -26,8 +26,8 @@ import os from 'node:os'
 import process from 'node:process'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { listPatches, inspectProfile, inspectApplied, describe as describeRows, installedVersion } from '../lib/selfcheck.js'
-import { targetOf, targetsWithStatus } from '../lib/targets.js'
+import { listPatches, inspectProfile, inspectApplied, describe as describeRows, installedVersion, inspectDuplicates, describeDuplicates } from '../lib/selfcheck.js'
+import { targetOf, targetsWithStatus, duplicates } from '../lib/targets.js'
 import { bundledPnpm } from './runtime-paths.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -157,7 +157,8 @@ function cmdList() {
   if (patches.length === 0) {
     console.log('patches/ 下没有补丁文件。')
     printForked()
-    return printWatching()
+    printWatching()
+    return printDuplicates()
   }
   console.log(`本仓补丁（${patches.length} 个）：`)
   for (const patch of patches) {
@@ -178,7 +179,33 @@ function cmdList() {
     console.log(`    sha256：${patch.sha256}`)
   }
   printForked()
-  return printWatching()
+  printWatching()
+  return printDuplicates()
+}
+
+/**
+ * 重复层 —— 该卸的包在不在。与补丁相反，这类是「静默多出来」的故障：
+ * 多出来的那个不报错，只是把活抢走（详见 lib/targets.js 的 DUPLICATES）。
+ */
+function printDuplicates() {
+  const table = duplicates()
+  if (table.length === 0) return 0
+  const rows = inspectDuplicates(profile, Object.fromEntries(table))
+  console.log(`\n重复层（${rows.length} 个，应与接手的包二选一）：`)
+  for (const row of rows) {
+    const where = []
+    if (row.inDeps) where.push('dependencies')
+    if (row.inBundles) where.push('bundles')
+    if (row.inModules) where.push('node_modules')
+    const state = where.length === 0 ? '未装（正确）' : `仍在场：${where.join(' / ')}`
+    console.log(`  ${row.packageName}  （${state}）`)
+    console.log(`    插件：${row.meta.title ?? '（未登记中文名）'}${row.meta.summary ? ` —— ${row.meta.summary}` : ''}`)
+    console.log(`    接手：${row.meta.keepBy ?? '（未登记）'}`)
+    if (row.meta.reason) console.log(`    理由：${row.meta.reason}`)
+  }
+  const lines = describeDuplicates(rows)
+  if (lines.length > 0) for (const line of lines) console.log(`  · ${line}`)
+  return rows.every(row => row.ok) ? 0 : 1
 }
 
 /**
@@ -355,7 +382,9 @@ function cmdVerify() {
 
   console.log(ok ? '\n全部核对通过。' : '\n有未通过项，见上。')
   if (!ok) for (const line of describeRows(rows)) console.log(`  · ${line}`)
-  return ok ? 0 : 1
+  // 重复层也核一遍：补丁全对、主题层却装了两份，同样是坏的。
+  const dupOk = printDuplicates() === 0
+  return ok && dupOk ? 0 : 1
 }
 
 function cmdRemove() {

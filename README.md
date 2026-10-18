@@ -107,6 +107,23 @@ node guard/scripts/load-drill.js                             # 宿主加载演�
 
 快照落在 `~/.dsh/rollbacks/<profile>/<stamp>/`，含 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`cordis.yml`、`cordis.patch.yml` 五个文件 + `manifest.json`。装插件（`plugin_install` / `plugin_uninstall` / `plugin_toggle`）前会自动先存一份 `auto-before-install`。
 
+## 重复层：该卸的包回潮了没有
+
+补丁是「静默地掉」，重复层是「**静默地多出来**」——多出来的那个不报错，它只是把活抢走。
+
+两个实例：
+
+- **2026-10-14**：profile 里残留的独立 `dsh-video-skin@0.1.1` 先注册，赢下了整批 `/dsh-video-skin/*` 路由；dsh-maid-scenery 内置视频层那批次的每次注册都撞名抛错，而 scenery 把路由注册包在 `try/catch` 里（装饰品不该让页面变红）——失败只落一行 warning。页面上看起来「就是少了点什么」：面板少一行「音乐音量」滑块、播放键报「无可播音乐」、静态素材 404 而背景照旧。
+- **2026-10-17**：`@smalltailqwq/dsh-client-ui-skin-maid-atelier` 与 dsh-maid-scenery 内置主题层是**同一份东西**——`client.js` 字节级相同（同 sha256）、32 个哈希素材一个不差、`skin.json` 的 `id` 同为 `maid-atelier`。两套同时进场就是重复注入。处置：**内置层留作唯一，独立包卸掉**。
+
+表在 `lib/targets.js` 的 `DUPLICATES`，判据只有一条：**这个包名不该出现在 profile 里**。三处任一是命中：
+
+1. `package.json` 的 `dependencies`
+2. `dsh.profile.bundles`
+3. `node_modules/<包名>`（pnpm 的账本残留；`pnpm remove` 之后还可能留着一个指向源码的 junction，得 `rmdir` 掉）
+
+还多问一句「接手的那个还在不在」：只卸不补会把主题层整个弄没，那是另一种故障，也得报。`patch.mjs list` / `verify` 会打印这张表，`index.js` 每次启动也查一遍。
+
 ## 启动自检
 
 `index.js` 在 DSH 启动时跑一次 `lib/selfcheck.js`，问三件事（缺一不可，因为它们是三个独立的失效点）：
