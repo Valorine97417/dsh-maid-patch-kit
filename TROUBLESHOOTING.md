@@ -2,9 +2,9 @@
 
 > 用途：本仓（第三方插件维护：给社区插件打不阻碍上游更新的维护补丁 + 上游停更的整包接管）在**新设备上安装、迁移、重装**时的参考。
 > 每条按「症状 → 原因 → 解法 → 验证方式」写，症状照抄实测报错。只在有据可查时下结论，不确定的标「（待核）」。
-> 素材来源：本仓源码与注释（`scripts/patch.mjs`、`lib/selfcheck.js`、`README.md`、`guard/`）、记忆库、2026-10-14 ~ 10-18 的会话原文与终端输出。
+> 素材来源：本仓源码与注释（`scripts/patch.mjs`、`lib/selfcheck.js`、`README.md`、`guard/`）、记忆库、2026-10-14 ~ 10-19 的会话原文与终端输出。
 >
-> 最后更新 2026-10-18
+> 最后更新 2026-10-19（新增 1.7/1.8/1.9；1.3 补「绕过的副作用」）
 
 本机基线（写文档时实查，供对照）：
 
@@ -49,7 +49,7 @@
 
 **验证方式**：profile 的 `package.json` 里两条 link 在、bundles 里有名；`node scripts/patch.mjs list` 里「已接管」段显示 `dsh-maid-guard（已接入 0.3.2-fork.1）`、`dsh-orb（已装 0.1.7）`；重启后 `verify` 仍全部通过。
 
-### 1.3 pnpm 安装被供应链门禁拦下（本机已遇到两次）
+### 1.3 pnpm 安装被供应链门禁拦下（本机已遇到三次；绕过只对当次生效，副作用见本节末）
 
 **症状**：
 
@@ -63,7 +63,7 @@ billion-context@0.1.197 was published at 2026-10-14T08:34:39.130Z, within the mi
 
 **原因**：profile 的 lockfile 里**别的**包触犯 pnpm 的 `minimumReleaseAge`（24 小时冷却）。补丁本身的登记与补丁文件其实已经写好，只差 install 这一步——即门禁挡住的是整次安装，不是补丁内容。
 
-**解法**：命令行传 `--config.minimumReleaseAge=0`：
+**解法（应急，只在确实要精确版本时用一次）**：命令行传 `--config.minimumReleaseAge=0`：
 
 ```bash
 node "D:/DeepSeek Harness/resources/runtime/pnpm/bin/pnpm.cjs" install --config.minimumReleaseAge=0   # cwd: profile
@@ -71,7 +71,23 @@ node "D:/DeepSeek Harness/resources/runtime/pnpm/bin/pnpm.cjs" install --config.
 
 - **环境变量方式实测无效**（`npm_config_minimum_release_age` 不生效），只能从 argv 传——`scripts/patch.mjs` 里也是这么写的（`POLICY_OVERRIDE_ARGS`）。
 - `scripts/patch.mjs install` 默认仍受门禁保护，只在裸跑失败时**自动带覆盖重试一次**（仅本次调用，不改配置文件）；手工 install 需自己加参数。
-- 另有正道一条：把该包写进 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`（本机已列 `dsh-whale-widget@0.4.2`、`billion-context@0.1.195 || 0.1.196 || 0.1.197`、`dsh-ops@0.3.0`、`dsh-orb`、`@michengai/dsh-skills-manager@1.1.23`）。
+- 另有正道一条：把该包写进 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`（本机已列 `dsh-whale-widget@0.4.2`、`billion-context@0.1.195 || 0.1.196 || 0.1.197`、`dsh-ops@0.3.0`、`dsh-orb`、`@michengai/dsh-skills-manager@1.1.23`）。 两点实况（2026-10-19 公司机实查）：**这份名单是老家 `Kayle` 机的**，公司机 `C:\Users\Administrator\.dsh\profiles\desktop\pnpm-workspace.yaml` 里**没有** `minimumReleaseAgeExclude` 这个键；且名单**按版本号写死**，包一升级就管不到（`billion-context` 升到 0.1.201 时 `0.1.195 || 0.1.196 || 0.1.197` 三条全空），要跟着重列。
+
+**绕过的副作用（2026-10-19 公司机实测，这条是被踩出来的）**：`--config.minimumReleaseAge=0` 是**命令行开关**，不写进任何配置文件，所以**只对那一次 install 生效**。绕过装成功后，lockfile 里就留下「没到龄」的条目；下一次任何会 verify lockfile 的操作（`dsh plugin add/remove/exec`）都按默认 1440 分钟重验，**必然整片红**：
+
+```text
+[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 5 lockfile entries failed verification:
+```
+
+（本轮的红名单：`billion-context@0.1.201`、`dsh-client-auto-continue@0.14.3`、`dsh-context@0.73.3`、`dsh-cost-meter@1.9.11`、`strtok3@10.6.2`，cutoff 打的是 `2026-10-18T07:22Z`。）
+
+三点要记住：
+
+- **cutoff 是滚动窗口，不用修**。代码真值：bundled pnpm 11.28.5 `dist/pnpm.mjs:150042` 写作 `cutoff = (opts3.now ?? Date.now()) - opts3.minimumReleaseAge * 60 * 1e3`——**单位是分钟**，默认 1440。每个条目发布满 24h 自行解禁，本批最后一个（`dsh-cost-meter@1.9.11`，发布 10-19T05:37Z）到北京 10-20 13:37 后校验自动转绿。老大 2026-10-19 就此拍板「**那就先不管他**」＝选等自愈，所以**不要**擅自往 `pnpm-workspace.yaml` 写 `minimumReleaseAge: 0`。
+- 影响面**只有 CLI 的插件管理操作**。App 启动不跑这次 verify（推断依据：门禁红的同一批包在重启后照常加载，`/comfyui/ping` 返回 200），但 `add`/`remove` 会先验证再动手——见记忆 `0mv6b6uvx`：门禁一红连**移除**都做不了；`pnpm clean --lockfile` 那种「清锁重来」的修法会丢掉 `link:` 依赖、会去 registry 重拉小困全家桶，**别用**。
+- `dsh plugin … exec` 会因为这次半途而废的 install 连带炸出 `ERR_MODULE_NOT_FOUND`，看着像插件坏——**见 1.8**。
+
+**根治（比逐次绕过好）**：把要用的包按 `name@version` 写进 profile `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`（写法见上一条），或者接受「太新的版本它退回旧版本装」这个默认行为——DSH 界面本来就是这么提示的（「发布时间未满规定时长的版本不会被自动安装，因此本次安装的是 {installed}，而非最新版本 {version}」）。**别整机关成 0**：这层防护拦的是新发布包被投毒的窗口，pnpm 11 默认开着有理由。
 
 **验证方式**：重跑 install 退出码 0；`node scripts/patch.mjs verify` 全绿。注意一个实测现象：**第一次失败时 junction 与 lock 条目可能已经写入**，所以别只看「包目录在不在」，要看 verify。
 
@@ -112,6 +128,75 @@ D:/DeepSeek Harness/resources/runtime/primary-runtime/dependencies/python/python
 **验证**：对 `link:` 包，`pnpm-lock.yaml` 里**不该**出现该包的 `patch_hash=`；`verify` 对它的判定只走自检项（`APPLIED_MARKERS` 直读源码文件）。若 `verify` 报「未登记到 patchedDependencies」而目标本来就是 `link:` 包，那是预期行为，不是故障——`verify` 对 `link:` 包的确切输出**未验证**（本条根因来自 pnpm 适用范围，不是现场报错定位）。
 - **教训**：分清「登记失败会报错」与「登记成功但根本不适用」——后者零报错、零提示，是最费时间的一类。
 - 与 §1.5 不是一回事：§1.5 是**改动面横跨宿主半/客户端半，pnpm patch 表达不了**（所以整包接管）；本条是**依赖类型本身不在 patch 管辖范围**。
+
+### 1.7 registry 上的第三方插件「装上了但界面没动静」：`ERR_PNPM_IGNORED_BUILDS` 让 `dsh plugin add` 以退出码 1 收场，bundles 没人登记
+
+**症状**：2026-10-19 公司机（`C:\Users\Administrator\.dsh\profiles\desktop`）连续三次 `dsh plugin --profile desktop add`——`@sugarforever/dsh-zvec-grep@0.1.2`、`dsh-cost-meter@1.9.11`、`dsh-workbuddy-connect@0.7.8`——都是**包文件全落地、命令却以退出码 1 收场**：
+
+```text
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: @zvec/zvec@0.7.1, node-llama-cpp@3.18.1, onnxruntime-node@1.21.0, protobufjs@7.6.6, sharp@0.34.5
+```
+
+（`dsh-workbuddy-connect` 那份末尾还多一个 `@google/genai@2.21.0`。）重启后插件面板/工具列表里没有它们，现象像「安装失败」，其实包是完整的，缺的是**登记**。
+
+**原因**：① pnpm 11 默认不执行依赖的 postinstall，带原生构建的包必命中 ignored-builds，命令因此非零退出；② 这三个包的 `dsh.profile.bundles` 条目都**没有**被自动写入，得手工补。至于「`plugin add` 是否只在退出码 0 时才写 bundles」是我根据三次相同表现的**推断，未验证**（待核：要定性得读宿主 `plugin_manager` 那段的分支）。同理，`@zvec/zvec`、`node-llama-cpp`、`sharp` 的原生构建被跳过后**功能到底可用与否也没验**——本机 `exec` 自检路径本身不可用，原因见 1.8。
+
+**解法**（闭环四步，本机三个包实测有效）：
+
+1. 装上：`dsh plugin --profile desktop add <pkg>`，环境里带代理变量并加 `--config.minimumReleaseAge=0`（同 1.3；绕过的后遗症见 1.3 与 1.8）。
+2. 手工把包名追加进 profile `package.json` 的 `dsh.profile.bundles`——**写文件别带 UTF-8 BOM**（见 3.6，带 BOM 桌面端启动即死）。
+3. 需要配置的再往 profile `cordis.patch.yml` 追加一段：
+
+```yaml
+- id: zvec-grep
+  name: '@sugarforever/dsh-zvec-grep'
+  config:
+    enabled: true
+```
+
+包**自带** `cordis.patch.yml` 的（`dsh-workbuddy-connect` 自带 `id: llm-workbuddy`）由宿主自动合成，**不要再手写一遍**。
+
+4. **重启 DSH**——宿主只在启动时合成 bundles。
+
+**验证方式**：
+
+```bash
+node -e "const j=require('C:/Users/<用户>/.dsh/profiles/desktop/package.json');console.log(j['dsh.profile.bundles'].includes('<包名>'))"
+```
+
+返回 `true`；重启后按 6.2 确认服务活着。两个防误判点：pnpm 输出里的 `-57 packages` 是**旧版本剪枝**、不是删插件，逐个 `Test-Path node_modules/<包名>` 复核即可；`@liustack/modlens@3.27.1` 这类以「入口文件在不在」验收更靠谱（本机实测 `dist/main.js` = 200624 字节），因为历史上出过 npm tarball 缺 `dist/main.js` 的情况。
+
+### 1.8 想用 `dsh plugin … exec <包> status` 自检插件？这条路是双坑，别走
+
+**症状**：2026-10-19 为确认 `dsh-workbuddy-connect` 是否健康，跑 `dsh plugin --profile desktop exec dsh-workbuddy-connect status`。先撞门禁红：
+
+```text
+[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 5 lockfile entries failed verification:
+```
+
+紧接着又冒出一条看着更像「插件坏了」的：
+
+```text
+ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-home-paths' imported from C:\Users\Administrator\.dsh\profiles\desktop\node_modules\dsh-workbuddy-connect\lib\host-heartbeat-sjotAEdb.js
+```
+
+**原因**：① `exec` 会先重跑 lockfile 校验，profile 里只要有没到龄的包（1.3 里那些靠 `--config.minimumReleaseAge=0` 装进来的），这一步必红；② 校验失败让「跑脚本前那次 install」半途而废，`node_modules` 与 lockfile 失同步，插件的 `import` 随即解析不到宿主包——而 `@deepseek-ai/*`（app.asar 里实测 304 个）**本来就住在 `D:/DeepSeek Harness/resources/app.asar` 的 `dsh/node_modules/` 内，profile 的 `node_modules` 里根本没有**，脱离宿主进程去 `exec` 不可能解析成功。两条叠起来，一个**策略门禁**问题伪装成了**依赖缺失**问题。
+
+另记一条单位真值（省得再猜）：bundled pnpm 11.28.5 里 `dist/pnpm.mjs:150042` 是 `cutoff = (opts3.now ?? Date.now()) - opts3.minimumReleaseAge * 60 * 1e3`——**单位是分钟**，本机观察到的 cutoff 恰为 now−24h（默认 1440）。所以「绕过后会一直红」是**滚动窗口**，每个条目发布满 24h 自行解禁，不需要任何手工修复。
+
+**解法**：桌面 profile 的插件自检**不要用 `exec`**（该插件 README 也写明桌面 profile 由 App 托管、官方 Electron 版拒绝 `--profile desktop`）。改看三处真值：包内 `lib/*.js` 的 `inject` 列表与顶层 `throw`（判断会不会连累整个 bundle 加载）、profile `package.json` 的 `bundles` 有没有它、`node_modules/<包>` 入口文件的字节数是否在。
+
+**验证方式**：本轮**没有实跑过「门禁红状态下的重启」**，所以「此报错不影响 App 启动」目前只是依据机制的推断（待核：等 5 个条目到龄、校验转绿后重启一次，或直接在红状态下重启观察主进程与 6.2 的服务探活）。已经查实的是另一头：`exec` 失败与插件本体无关——包文件、`bundles`、`cordis.patch.yml` 三处真值都齐，报错只出现在 `exec` 这条旁路。
+
+### 1.9 `dsh-workbuddy-connect`：装上但没有「WorkBuddy」模型分组，是缺 App 不是缺补丁
+
+**症状**：2026-10-19 装好 `dsh-workbuddy-connect@0.7.8`（作者 `corrinehu`，非小困家族）并重启，模型选择器里**没有出现 WorkBuddy 分组**。插件本身不报错。
+
+**原因**：该插件**不自己起 OAuth**，直接复用 WorkBuddy 桌面 App 的登录态——国内版出「WorkBuddy」分组、国际版出「WorkBuddy AI」分组，两版可并存且积分互不混用。本机查过注册表卸载项、`Program Files`、`LOCALAPPDATA`、`APPDATA` 与进程列表，**WorkBuddy 桌面 App 根本没装**，分组自然不会出现。另：公司机 `dsh-our-free-model` 的 `catalog.json` 里也没有 workbuddy 渠道（老家那台的 `workbuddy/...` 前缀走的是另一套渠道），别指望它顶上来。
+
+**解法**：先装 WorkBuddy 桌面 App 并登录，再重启 DSH 看分组；插件侧无需改动。装它时 peer 全对得上（宿主 `cordis` 4.0.5；`dsh-llm`/`dsh-attachment`/`dsh-home-paths`/`dsh-host-webserver`/`dsh-settings`/`dsh-llm-pi-ai` 全 0.2.1-rc.2），不会被静默跳过。bundles 那一步要手工补，见 1.7。
+
+**验证方式**：`lib/index.js` 实测 `inject = ["llm"]`，且**只有 2 处 `throw`，都在运行时路径**（`dsh-workbuddy-connect: the workbuddy route has no pi-ai credential lifecycle`、`workbuddy shim has no listening address`），模块顶层不炸 → 没装 App 时它只会静默无分组，不会连累同批 bundle。它自带的 `cordis.patch.yml` 会插 `id: llm-workbuddy`，由宿主自动合成，profile 级不要重复手写。
 
 ## 二、补丁失效与体检告警（上游更新后怎么办）
 
