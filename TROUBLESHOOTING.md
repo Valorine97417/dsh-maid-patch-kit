@@ -198,6 +198,14 @@ ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-home-paths' imported
 
 **验证方式**：`lib/index.js` 实测 `inject = ["llm"]`，且**只有 2 处 `throw`，都在运行时路径**（`dsh-workbuddy-connect: the workbuddy route has no pi-ai credential lifecycle`、`workbuddy shim has no listening address`），模块顶层不炸 → 没装 App 时它只会静默无分组，不会连累同批 bundle。它自带的 `cordis.patch.yml` 会插 `id: llm-workbuddy`，由宿主自动合成，profile 级不要重复手写。
 
+### 1.10 dsh-remote-web-ui 默认只绑回环 127.0.0.1 导致外网/手机扫码无法连接（2026-10-20）
+
+- **症状**：安装插件并重启 DSH 后，服务端接口 HTTP 200 正常、鉴权正常，但手机扫码或同一局域网访问始终无法连接，提示「用不了」。
+- **原因**：该插件服务默认仅监听本机回环地址（`127.0.0.1`）。跨设备内网扫码或远程访问需要显式开启「局域网访问」绑定（`0.0.0.0`）或额外配置云隧道穿透，与用户开箱即连的预期不匹配。
+- **解法**：若不需要远程控制功能，应将其彻底卸载清除，避免后台残留监听：清理 profile 配置、锁文件、缓存目录及关联的云隧道依赖包；若确需使用，需在配置中显式启用局域网监听并配合密码保护。
+- **验证**：用本地请求探测插件自身路由确认 HTTP 200 服务存活；`netstat -ano` 核对监听 IP 是否为 `127.0.0.1`；卸载后检查配置与运行依赖均已清除，无残留后台进程。
+- 来源：2026-10-20 会话排查实录；`dsh-maid-lane-fix/docs/incidents-2026-10-20.md` 第十三条。
+
 ## 二、补丁失效与体检告警（上游更新后怎么办）
 
 ### 2.1 上游发新版，补丁版本键悬空，pnpm 中止整个 install
