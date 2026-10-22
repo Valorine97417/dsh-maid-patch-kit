@@ -519,10 +519,36 @@ node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.
 - **未验**：本机只核了 `dsh-type-meta`（404）与 `dsh-web-frontend`（200）两个名字，其余 `@deepseek-ai/*` 未逐个探测；也没定位是哪个 manifest 把它写进依赖的（日志止于报错，无更早的 manifest 记录）。
 - 与 §3.9.2「认证通路」分界：那条是**拿不到凭证**，本条是**凭证无所谓、包不存在**。
 
+#### 3.9.5 `ops_bash` 报 `EXECUTOR_UNAVAILABLE`：git-bash 自身起不来，命令其实一条都没执行
+
+**症状**：连续几条命令全回同一段（原始 stderr，2026-10-21 15:44 一轮里同期 18 次）：
+
+```
+[stderr]
+      0 [main] bash (30812) C:\Users\<本机用户>\.dsh\dsh-ops\bash-ipc\56189cdad3c184f3cbd280a0\usr\bin\bash.exe: *** fatal error - CreateFileMapping S-1-5-21-<SID>.1, Win32 error 5.  Terminating.
+[error: EXECUTOR_UNAVAILABLE: the sandbox runtime failed before the ...
+```
+
+看着像「命令写错了」，于是去改命令、加 `2>/dev/null`、换 `cd` 写法，全无效——因为**命令根本没跑起来**。
+
+**原因**：报错来自 `ops_bash` 自带的 git-bash 运行时本身（`%USERPROFILE%\.dsh\dsh-ops\bash-ipc\<id>\usr\bin\bash.exe`）：它在建 cygwin 共享内存段（`CreateFileMapping`）时被 Windows 拒绝（`Win32 error 5` = 拒绝访问），直接 `Terminating.`，宿主把它归成 **`EXECUTOR_UNAVAILABLE`（执行器不可用）**，而不是命令返回非零退出码。**根因未证实**：可能是共享内存段被残留实例占用、安全软件拦句柄、或多会话抢同一个 `bash-ipc\<id>`；本轮只取证到「同一 `bash-ipc` id 反复失败、同期 `pwsh` 工具正常」，没有堆栈也没有系统事件日志。
+
+**解法**：**别在原通路上原地重试**——同一个执行器坏了，重试只会刷同样的 stderr。立刻换另一条执行通路跑同一条命令：
+1. `pwsh` 工具（宿主 PowerShell）：`Select-String` / `Get-ChildItem` / `$env:` 替换 `grep` / `ls` / `$VAR`；
+2. 或普通 `bash` 工具（宿主 PowerShell 后端，注意它是 PowerShell，不能写 `&&`、`||`、`head`、`/dev/null`——见下方判据）。
+
+**别做的两件事**：① 不要去删 `%USERPROFILE%\.dsh\dsh-ops\bash-ipc\` 目录试运气——那是运行时数据目录，删了不解决问题还丢证据；② 别当成插件故障去查补丁、依赖或 profile，这条与 11 本册子里任何插件都无关。
+
+**验证**：换通路后同一条命令有正常输出（`pwsh` 侧等价命令跑通即证命令本身没错）；反向对照：本轮（2026-10-23）`ops_bash` 全程正常、同一批命令不再复现 → 属**间歇性**执行器故障，不是命令写法问题。
+
+- **未验**：没拿到 `Win32 error 5` 的系统层证据（安全软件日志、句柄占用方），也没定位 `bash-ipc\<id>` 的分配逻辑；触发条件只知道「成批连续失败」，不知道前置诱因。
+- **同族判据（同一轮里一起踩到的三种「shell 选错」）**：① 在 `bash` 工具（PowerShell 后端）里写 bash 语法 → `&&`/`||` 报 `表达式或语句中包含意外的标记`、`head`/`grep` 报 `无法将“head”项识别为 cmdlet`、`> /dev/null` 报 `Could not find a part of the path 'D:\dev\null'`；遇到这些别改命令逻辑，**换 `ops_bash` 工具**。② `ps1` 脚本被执行策略拦住 → `. "<脚本>.ps1"` 报 `未对文件进行数字签名…PSSecurityException`，改用 `$code = Get-Content "<脚本>.ps1" -Raw; Invoke-Expression $code`（本机取 `GH_PAT` 就是这么取的，实测可用）。③ `Invoke-WebRequest` 报 `缺少参数“SessionVariable”` → 是调用方把 `-SessionVariable` 写成了裸参数，别去查网络。
+
+
 
 ---
 
-> 本节四条的证据强度：3.9.1 有原始报错串（A）；3.9.2 有原始报错串 + 可用的替代通路（A）；3.9.3 只有现象描述与规避手法，**无原始报错串**（B）；3.9.4 有原始 HTTP 状态码 + 双向对照（A），但只探了两个包名（未逐个探测，见条内未验）。真实用户名一律以 `%USERPROFILE%` / `<本机用户>` 占位。
+> 本节五条的证据强度：3.9.1 有原始报错串（A）；3.9.2 有原始报错串 + 可用的替代通路（A）；3.9.3 只有现象描述与规避手法，**无原始报错串**（B）；3.9.4 有原始 HTTP 状态码 + 双向对照（A），但只探了两个包名（未逐个探测，见条内未验）；3.9.5 有原始 stderr 原文与「同期另一通路正常」的反向对照（A），**根因未证实**（B）。真实用户名一律以 `%USERPROFILE%` / `<本机用户>` 占位。
 
 ## 四、回滚与备份
 
